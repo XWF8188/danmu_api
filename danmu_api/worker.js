@@ -1,6 +1,6 @@
 // 全局状态（Cloudflare 和 Vercel 都可能重用实例）
 // ⚠️ 不是持久化存储，每次冷启动会丢失
-const VERSION = "1.0.0";
+const VERSION = "1.0.1";
 let animes = [];
 let episodeIds = [];
 let episodeNum = 10001; // 全局变量，用于自增 ID
@@ -2441,6 +2441,107 @@ async function searchAnime(url) {
   });
 }
 
+// Extracted function for POST /api/v2/match
+async function matchAnime(url, req) {
+  try {
+    // 获取请求体
+    const body = await req.json();
+
+    // 验证请求体是否有效
+    if (!body) {
+      log("error", "Request body is empty");
+      return jsonResponse(
+        { errorCode: 400, success: false, errorMessage: "Empty request body" },
+        400
+      );
+    }
+
+    // 处理请求体中的数据
+    // 假设请求体包含一个字段，比如 { query: "anime name" }
+    const { fileName } = body;
+    if (!fileName) {
+      log("error", "Missing fileName parameter in request body");
+      return jsonResponse(
+        { errorCode: 400, success: false, errorMessage: "Missing fileName parameter" },
+        400
+      );
+    }
+
+    // 这里可以继续处理 query，比如调用其他服务或数据库查询
+    log("info", `Processing anime match for query: ${fileName}`);
+
+    const regex = /^(.+?)\s+S(\d+)E(\d+)$/;
+    const match = fileName.match(regex);
+
+    let title = match ? match[1] : fileName;
+    let season = match ? parseInt(match[2]) : null;
+    let episode = match ? parseInt(match[3]) : null;
+
+    log("info", "Parsed title, season, episode", { title, season, episode });
+
+    let originSearchUrl = new URL(req.url.replace("/match", `/search/anime?keyword=${title}`));
+    const searchRes = await searchAnime(originSearchUrl);
+    const searchData = await searchRes.json();
+    log("info", `searchData: ${searchData.animes}`);
+
+    let resAnime;
+    let resEpisode;
+    for (const anime of searchData.animes) {
+      if (anime.animeTitle.includes(title)) {
+        let originBangumiUrl = new URL(req.url.replace("/match", `bangumi/${anime.bangumiId}`));
+        const bangumiRes = await getBangumi(originBangumiUrl.pathname);
+        const bangumiData = await bangumiRes.json();
+        log("info", bangumiData);
+        if (season && episode && bangumiData.bangumi.episodes.length >= episode) {
+          resEpisode = bangumiData.bangumi.episodes[episode-1];
+          resAnime = anime;
+          break;
+        } else if (bangumiData.bangumi.episodes.length > 0) {
+          resEpisode = bangumiData.bangumi.episodes[0];
+          resAnime = anime;
+          break;
+        }
+      }
+    }
+
+    let resData = {
+      "errorCode": 0,
+      "success": true,
+      "errorMessage": "",
+      "isMatched": false,
+      "matches": []
+    };
+
+    if (resEpisode) {
+      resData["isMatched"] = true;
+      resData["matches"] = [
+        {
+          "episodeId": resEpisode.episodeId,
+          "animeId": resAnime.animeId,
+          "animeTitle": resAnime.animeTitle,
+          "episodeTitle": resEpisode.episodeTitle,
+          "type": resAnime.type,
+          "typeDescription": resAnime.typeDescription,
+          "shift": 0,
+          "imageUrl": resAnime.imageUrl
+        }
+      ]
+    }
+
+    log("info", `resMatchData: ${resData}`);
+
+    // 示例返回
+    return jsonResponse(resData);
+  } catch (error) {
+    // 处理 JSON 解析错误或其他异常
+    log("error", `Failed to parse request body: ${error.message}`);
+    return jsonResponse(
+      { errorCode: 400, success: false, errorMessage: "Invalid JSON body" },
+      400
+    );
+  }
+}
+
 // Extracted function for GET /api/v2/bangumi/:animeId
 async function getBangumi(path) {
   const animeId = parseInt(path.split("/").pop());
@@ -2552,16 +2653,20 @@ async function handleRequest(req, env) {
   let path = url.pathname;
   const method = req.method;
 
-  // GET /
-  if (path === "/" && method === "GET") {
+  function handleHomepage() {
     log("log", "Accessed homepage with repository information");
     return jsonResponse({
       message: "Welcome to the LogVar Danmu API server",
       version: VERSION,
       repository: "https://github.com/huangxd-/danmu_api.git",
       description: "一个人人都能部署的基于 js 的弹幕 API 服务器，支持爱优腾芒哔人弹幕直接获取，兼容弹弹play的搜索、详情查询和弹幕获取接口，并提供日志记录，支持vercel/cloudflare/docker/claw等部署方式，不用提前下载弹幕，没有nas或小鸡也能一键部署。",
-      notice: "本项目仅为个人爱好开发，代码开源。如有任何侵权行为，请联系本人删除。纯为爱发电，自用顺便分享，如果真要打赏，可以支付宝发口令红包到我的tg私信机器人 https://t.me/ddjdd_bot ，感谢😊，有问题提issue或私信机器人都ok。"
+      notice: "本项目仅为个人爱好开发，代码开源。如有任何侵权行为，请联系本人删除。有问题提issue或私信机器人都ok。https://t.me/ddjdd_bot"
     });
+  }
+
+  // GET /
+  if (path === "/" && method === "GET") {
+    return handleHomepage();
   }
 
   if (path === "/favicon.ico" || path === "/robots.txt") {
@@ -2570,7 +2675,7 @@ async function handleRequest(req, env) {
 
   // --- 校验 token ---
   const parts = path.split("/").filter(Boolean); // 去掉空段
-  if (parts.length < 2 || parts[0] !== token) {
+  if (parts.length < 1 || parts[0] !== token) {
     log("error", `Invalid or missing token in path: ${path}`);
     return jsonResponse(
       { errorCode: 401, success: false, errorMessage: "Unauthorized" },
@@ -2580,9 +2685,21 @@ async function handleRequest(req, env) {
   // 移除 token 部分，剩下的才是真正的路径
   path = "/" + parts.slice(1).join("/");
 
+  console.log(path);
+
+  // GET /
+  if (path === "/" && method === "GET") {
+    return handleHomepage();
+  }
+
   // GET /api/v2/search/anime
   if (path === "/api/v2/search/anime" && method === "GET") {
     return searchAnime(url);
+  }
+
+  // GET /api/v2/match
+  if (path === "/api/v2/match" && method === "POST") {
+    return matchAnime(url, req);
   }
 
   // GET /api/v2/bangumi/:animeId
@@ -2636,5 +2753,5 @@ export async function vercelHandler(req, res) {
 }
 
 // 为了测试导出 handleRequest
-export { handleRequest, searchAnime, getBangumi, getComment, fetchTencentVideo, fetchIqiyi, fetchMangoTV,
-  fetchBilibili, fetchYouku, fetchOtherServer };
+export { handleRequest, searchAnime, matchAnime, getBangumi, getComment, fetchTencentVideo, fetchIqiyi, fetchMangoTV,
+  fetchBilibili, fetchYouku, fetchOtherServer, httpGet, httpPost };

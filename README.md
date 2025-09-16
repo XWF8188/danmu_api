@@ -4,11 +4,12 @@
 
 本项目仅为个人爱好开发，代码开源。如有任何侵权行为，请联系本人删除。
 
-纯为爱发电，自用顺便分享，如果真要打赏，可以支付宝发口令红包到我的tg私信机器人 https://t.me/ddjdd_bot ，感谢😊，有问题提issue或私信机器人都ok。
+有问题提issue或私信机器人都ok。https://t.me/ddjdd_bot
 
 ## 功能
 - **API 接口**：
   - `GET /api/v2/search/anime?keyword=${queryTitle}`：根据关键字搜索动漫。
+  - `POST /api/v2/match`：根据关键字匹配动漫，用于自动匹配。
   - `GET /api/v2/bangumi/:animeId`：获取指定动漫的详细信息。
   - `GET /api/v2/comment/:commentId?withRelated=true&chConvert=1`：获取指定弹幕评论，支持返回相关评论和字符转换。
   - `GET /api/logs`：获取最近的日志（最多 500 行，格式为 `[时间戳] 级别: 消息`）。
@@ -16,7 +17,7 @@
 - **部署支持**：支持本地运行、Docker 容器化、Vercel 一键部署、Cloudflare 一键部署和 Docker 一键启动。
 
 ## 前置条件
-- Node.js（v18 或更高版本）
+- Node.js（v20.19.0 或更高版本）
 - npm
 - Docker（可选，用于容器化部署）
 
@@ -49,6 +50,7 @@
    使用 Postman 或 curl 测试：
    - `GET http://{ip}:9321/87654321`
    - `GET http://{ip}:9321/87654321/api/v2/search/anime?keyword=Anime%20A`
+   - `POST http://{ip}:9321/87654321/api/v2/api/v2/match`
    - `GET http://{ip}:9321/87654321/api/v2/bangumi/1`
    - `GET http://{ip}:9321/87654321/api/v2/comment/1?withRelated=true&chConvert=1`
    - `GET http://{ip}:9321/87654321/api/logs`
@@ -68,7 +70,7 @@
 3. **测试 API**：
    使用 `http://{ip}:9321/{TOKEN}` 访问上述 API 接口。
 
-## Docker 一键启动
+## Docker 一键启动 【推荐】
 1. **拉取镜像**：
    ```bash
    docker pull logvar/danmu-api:latest
@@ -80,10 +82,23 @@
    ```
    - 使用`-e TOKEN=your_token_here`设置`TOKEN`环境变量。
 
+   ```yaml
+   services:
+     danmu-api:
+       image: logvar/danmu-api:latest
+       container_name: danmu-api
+       ports:
+         - "9321:9321"
+       environment:
+         - TOKEN=your_token_here  # 请将your_token_here 替换为实际的 Token 值
+       restart: unless-stopped    # 可选配置，容器退出时自动重启（非必需，可根据需求删除）
+   ```
+   - 或使用docker compose部署。
+
 3. **测试 API**：
    使用 `http://{ip}:9321/{TOKEN}` 访问上述 API 接口。
 
-## 部署到 Vercel
+## 部署到 Vercel 【推荐】
 
 ### 一键部署
 点击以下按钮即可将项目快速部署到 Vercel：
@@ -95,6 +110,10 @@
   1. 转到你的项目设置。
   2. 在“Environment Variables”部分添加 `TOKEN` 变量，输入你的 API 令牌值。
   3. 保存更改并重新部署。
+- 示例请求：`https://{your_domian}.vercel.app/87654321/api/v2/search/anime?keyword=子夜归`
+
+### 优化点
+Settings > Functions > Advanced Setting > Function Region 切换为 Hong Kong，能提高访问速度，体验更优
 
 ## 部署到 Cloudflare
 
@@ -109,6 +128,7 @@
   2. 转到“Settings” > “Variables”。
   3. 添加 `TOKEN` 环境变量，输入你的 API 令牌值。
   4. 保存并部署。
+- 示例请求：`https://{your_domian}.workers.dev/87654321/api/v2/search/anime?keyword=子夜归`
 
 ### 手动部署
 创建一个worker，将`danmu_api/worker.js`里的代码直接拷贝到你创建的`worker.js`里，然后点击部署。
@@ -126,6 +146,13 @@
 <img src="https://i.mji.rip/2025/09/14/9fdf945fb247994518042691f60d7849.jpeg" style="width:400px" />
 <img src="https://i.mji.rip/2025/09/14/dbacc0cf9c8a839f16b8960de1f38f11.jpeg" style="width:400px" />
 
+## 环境变量列表
+| 变量名称      | 描述 |
+| ----------- | ----------- |
+| TOKEN      | 用户token       |
+| OTHER_SERVER   | 兜底第三方弹幕服务器，如 https://api.danmu.icu        |
+| VOD_SERVER      | vod查询站点，如 https://www.caiji.cyou       |
+
 ## 项目结构
 ```
 danmu_api/
@@ -133,7 +160,6 @@ danmu_api/
 │   └── workflows/
 │       └── docker-image.yml
 ├── danmu_api/
-│   ├── README.md       # 项目文档
 │   ├── server.js       # 本地node启动脚本
 │   ├── worker.js       # 主 API 服务器代码
 │   ├── worker.test.js  # 测试文件
@@ -141,6 +167,7 @@ danmu_api/
 ├── Dockerfile
 ├── package.json
 ├── vercel.json
+├── README.md
 ```
 
 ## 注意事项

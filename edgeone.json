@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "routes": [
+    {
+      "pattern": "/",
+      "function": "index"
+    },
+    {
+      "pattern": "/api/*",
+      "function": "index"
+    },
+    {
+      "pattern": "/*/api/*",
+      "function": "index"
+    }
+  ],
+  "functions": {
+    "index": {
+      "src": "danmu_api/worker.js"
+    }
+  },
+  "env": {
+    "TOKEN": "87654321"
+  }
+}

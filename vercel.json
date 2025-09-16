@@ -19,8 +19,5 @@
       "src": "/([^/]+)/api/(.*)",
       "dest": "/danmu_api/worker.js"
     }
-  ],
-  "env": {
-    "TOKEN": "87654321"
-  }
+  ]
 }
