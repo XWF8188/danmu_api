@@ -1,25 +1,14 @@
 {
-  "version": 1,
-  "routes": [
+  "name": "danmu-api",
+  "outputDirectory": "./",
+  "rewrites": [
     {
-      "pattern": "/",
-      "function": "index"
+      "source": "/",
+      "destination": "/node-functions/index.js"
     },
     {
-      "pattern": "/api/*",
-      "function": "index"
-    },
-    {
-      "pattern": "/*/api/*",
-      "function": "index"
+      "source": "/*",
+      "destination": "/node-functions/[[...path]].js"
     }
-  ],
-  "functions": {
-    "index": {
-      "src": "danmu_api/worker.js"
-    }
-  },
-  "env": {
-    "TOKEN": "87654321"
-  }
+  ]
 }

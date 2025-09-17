@@ -1,4 +1,4 @@
-name = "danmu-api3"
+name = "danmu-api"
 main = "danmu_api/worker.js"
 compatibility_date = "2025-09-13"
 
