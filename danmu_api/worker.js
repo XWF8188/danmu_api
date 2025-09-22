@@ -1,6 +1,6 @@
 // 全局状态（Cloudflare 和 Vercel 都可能重用实例）
 // ⚠️ 不是持久化存储，每次冷启动会丢失
-const VERSION = "1.0.2";
+const VERSION = "1.1.1";
 let animes = [];
 let episodeIds = [];
 let episodeNum = 10001; // 全局变量，用于自增 ID
@@ -37,6 +37,32 @@ function resolveVodServer(env) {
   if (env && env.VOD_SERVER) return env.VOD_SERVER;         // Cloudflare Workers
   if (typeof process !== "undefined" && process.env?.VOD_SERVER) return process.env.VOD_SERVER; // Vercel / Node
   return DEFAULT_VOD_SERVER;
+}
+
+const DEFAULT_BILIBILI_COOKIE = ""; // 默认 bilibili cookie
+let bilibliCookie = DEFAULT_BILIBILI_COOKIE;
+
+// 这里既支持 Cloudflare env，也支持 Node process.env
+function resolveBilibiliCookie(env) {
+  if (env && env.BILIBILI_COOKIE) return env.BILIBILI_COOKIE;         // Cloudflare Workers
+  if (typeof process !== "undefined" && process.env?.BILIBILI_COOKIE) return process.env.BILIBILI_COOKIE; // Vercel / Node
+  return DEFAULT_BILIBILI_COOKIE;
+}
+
+// 优酷并发配置（默认 8）
+const DEFAULT_YOUKU_CONCURRENCY = 8;
+let youkuConcurrency = DEFAULT_YOUKU_CONCURRENCY;
+
+function resolveYoukuConcurrency(env) {
+  if (env && env.YOUKU_CONCURRENCY) {
+    const n = parseInt(env.YOUKU_CONCURRENCY, 10);
+    if (!Number.isNaN(n) && n > 0) return Math.min(n, 16);
+  }
+  if (typeof process !== "undefined" && process.env?.YOUKU_CONCURRENCY) {
+    const n = parseInt(process.env.YOUKU_CONCURRENCY, 10);
+    if (!Number.isNaN(n) && n > 0) return Math.min(n, 16);
+  }
+  return Math.min(DEFAULT_YOUKU_CONCURRENCY, 16);
 }
 
 // 添加元素到 episodeIds：检查 url 是否存在，若不存在则以自增 id 添加
@@ -320,7 +346,7 @@ async function get360Animes(title) {
     return animes;
   } catch (error) {
     log("error", `get360Animes error: ${error.message}`);
-    throw error;
+    return [];
   }
 }
 
@@ -355,7 +381,7 @@ async function get360Zongyi(entId, site, year) {
     return links;
   } catch (error) {
     log("error", `get360Animes error: ${error.message}`);
-    throw error;
+    return [];
   }
 }
 
@@ -443,7 +469,17 @@ function convertToDanmakuJson(contents, platform) {
   for (const item of items) {
     let attributes, m;
 
-    if ("timepoint" in item) {
+    // 新增：处理新格式的弹幕数据
+    if ("progress" in item && "mode" in item && "content" in item) {
+      // 处理新格式的弹幕对象
+      attributes = [
+        (item.progress / 1000).toFixed(2), // progress 转换为秒
+        item.mode || 1,
+        item.color || 16777215,
+        `[${platform}]`
+      ].join(",");
+      m = item.content;
+    } else if ("timepoint" in item) {
       // 处理对象数组输入
       attributes = [
         parseFloat(item.timepoint).toFixed(2),
@@ -453,6 +489,9 @@ function convertToDanmakuJson(contents, platform) {
       ].join(",");
       m = item.content;
     } else {
+      if (!("p" in item)) {
+        continue;
+      }
       // 处理 XML 解析后的格式
       const pValues = item.p.split(",");
       attributes = [
@@ -682,6 +721,89 @@ function md5(message) {
   return (wordToHex(a) + wordToHex(b) + wordToHex(c) + wordToHex(d)).toLowerCase();
 }
 
+function parseDanmakuBase64(base64) {
+  const bytes = base64ToBytes(base64);
+  const elems = [];
+
+  let offset = 0;
+  while (offset < bytes.length) {
+    // 每个 DanmakuElem 在 elems 列表里是 length-delimited
+    const key = bytes[offset++];
+    if (key !== 0x0a) break; // field=1 (elems), wire=2
+    const [msgBytes, nextOffset] = readLengthDelimited(bytes, offset);
+    offset = nextOffset;
+
+    let innerOffset = 0;
+    const elem = {};
+
+    while (innerOffset < msgBytes.length) {
+      const tag = msgBytes[innerOffset++];
+      const fieldNumber = tag >> 3;
+      const wireType = tag & 0x07;
+
+      if (wireType === 0) {
+        // varint
+        const [val, innerNext] = readVarint(msgBytes, innerOffset);
+        innerOffset = innerNext;
+        switch (fieldNumber) {
+          case 1: elem.id = val; break;
+          case 2: elem.progress = val; break;
+          case 3: elem.mode = val; break;
+          case 4: elem.fontsize = val; break;
+          case 5: elem.color = val; break;
+          case 8: elem.ctime = val; break;
+          case 9: elem.weight = val; break;
+          case 11: elem.pool = val; break;
+          case 13: elem.attr = val; break;
+          case 15: elem.like_num = val; break;
+          case 17: elem.dm_type_v2 = val; break;
+        }
+      } else if (wireType === 2) {
+        // length-delimited
+        const [valBytes, innerNext] = readLengthDelimited(msgBytes, innerOffset);
+        innerOffset = innerNext;
+        switch (fieldNumber) {
+          case 6: elem.midHash = utf8BytesToString(valBytes); break;
+          case 7: elem.content = utf8BytesToString(valBytes); break;
+          case 10: elem.action = utf8BytesToString(valBytes); break;
+          case 12: elem.idStr = utf8BytesToString(valBytes); break;
+          case 14: elem.animation = utf8BytesToString(valBytes); break;
+          case 16: elem.color_v2 = utf8BytesToString(valBytes); break;
+        }
+      } else {
+        // 其他类型不常用，忽略
+        const [_, innerNext] = readVarint(msgBytes, innerOffset);
+        innerOffset = innerNext;
+      }
+    }
+
+    elems.push(elem);
+  }
+
+  return elems;
+}
+
+function readVarint(bytes, offset) {
+  let result = 0n;
+  let shift = 0n;
+  let pos = offset;
+  while (true) {
+    const b = bytes[pos++];
+    result |= BigInt(b & 0x7f) << shift;
+    if ((b & 0x80) === 0) break;
+    shift += 7n;
+  }
+  return [Number(result), pos];
+}
+
+function readLengthDelimited(bytes, offset) {
+  const [length, newOffset] = readVarint(bytes, offset);
+  const start = newOffset;
+  const end = start + length;
+  const slice = bytes.slice(start, end);
+  return [slice, end];
+}
+
 // =====================
 // 获取腾讯弹幕
 // =====================
@@ -783,8 +905,26 @@ async function fetchTencentVideo(inputUrl) {
             content: "",
         };
         content.timepoint = item.time_offset / 1000;
-        if (item.content_style?.color) {
-          log("log", "弹幕颜色:", JSON.stringify(item.content_style.color));
+        if (item.content_style && item.content_style !== "") {
+          try {
+            const content_style = JSON.parse(item.content_style);
+            // 优先使用渐变色的第一个颜色，否则使用基础色
+            if (content_style.gradient_colors && content_style.gradient_colors.length > 0) {
+              content.color = parseInt(content_style.gradient_colors[0].replace("#", ""), 16);
+            } else if (content_style.color && content_style.color !== "ffffff") {
+              content.color = parseInt(content_style.color.replace("#", ""), 16);
+            }
+
+            if (content_style.position) {
+              if (content_style.position === 2) {
+                content.ct = 5;
+              } else if (content_style.position === 3) {
+                content.ct = 4;
+              }
+            }
+          } catch (e) {
+            // JSON 解析失败，使用默认白色
+          }
         }
         content.content = item.content;
         contents.push(content);
@@ -915,7 +1055,7 @@ async function fetchIqiyi(inputUrl) {
         const danmaku = extract(xml, "content");
         const showTime = extract(xml, "showTime");
         const color = extract(xml, "color");
-        const step = Math.ceil(danmaku.length * datas.length / 10000);
+        const step = 1;
 
         for (let i = 0; i < danmaku.length; i += step) {
             const content = {
@@ -1033,6 +1173,11 @@ async function fetchMangoTV(inputUrl) {
             uid: 0,		//发送人的 id
             content: "",
         };
+        if (item.type === 1) {
+          content.ct = 5;
+        } else if (item.type === 2) {
+          content.ct = 4;
+        }
         content.timepoint = item.time / 1000;
         content.content = item.content;
         content.uid = item.uid;
@@ -1076,7 +1221,7 @@ async function fetchBilibili(inputUrl) {
     return [];
   }
 
-  let title, danmakuUrl;
+  let title, danmakuUrl, cid, aid, duration;
 
   // 普通投稿视频
   if (inputUrl.includes("video/")) {
@@ -1101,6 +1246,7 @@ async function fetchBilibili(inputUrl) {
       if (inputUrl.includes("BV")) {
         videoInfoUrl = `${api_video_info}?bvid=${path[2]}`;
       } else {
+        aid = path[2].substring(2)
         videoInfoUrl = `${api_video_info}?aid=${path[2].substring(2)}`;
       }
 
@@ -1117,7 +1263,8 @@ async function fetchBilibili(inputUrl) {
         return [];
       }
 
-      const cid = data.data.pages[p - 1].cid;
+      duration = data.data.duration;
+      cid = data.data.pages[p - 1].cid;
       danmakuUrl = `https://comment.bilibili.com/${cid}.xml`;
     } catch (error) {
       log("error", "请求普通投稿视频信息失败:", error);
@@ -1146,7 +1293,8 @@ async function fetchBilibili(inputUrl) {
       for (const episode of data.result.episodes) {
         if (episode.id == epid) {
           title = episode.share_copy;
-          const cid = episode.cid;
+          cid = episode.cid;
+          duration = episode.duration / 1000;
           danmakuUrl = `https://comment.bilibili.com/${cid}.xml`;
           break;
         }
@@ -1166,18 +1314,59 @@ async function fetchBilibili(inputUrl) {
     log("error", "不支持的B站视频网址，仅支持普通视频(av,bv)、剧集视频(ep)");
     return [];
   }
+  log("log", danmakuUrl, cid, aid, duration);
 
-  const response = await httpGet(danmakuUrl, {
-    headers: {
-      "Content-Type": "application/xml",
-      "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-    },
-  });
+  // 计算视频的分片数量
+  const maxLen = Math.floor(duration / 360) + 1;
+  log("log", "maxLen: ", maxLen);
 
-  const contents = response.data;
-  printFirst200Chars(contents);
+  const segmentList = [];
+  for (let i = 0; i < maxLen; i += 1) {
+    let danmakuUrl;
+    if (aid) {
+      danmakuUrl = `https://api.bilibili.com/x/v2/dm/web/seg.so?type=1&oid=${cid}&pid=${aid}&segment_index=${i + 1}`;
+    } else {
+      danmakuUrl = `https://api.bilibili.com/x/v2/dm/web/seg.so?type=1&oid=${cid}&segment_index=${i + 1}`;
+    }
 
-  return convertToDanmakuJson(contents, "bilibili");
+    segmentList.push({
+      segment_start: i * 360 * 1000,
+      segment_end: (i + 1) * 360 * 1000,
+      url: danmakuUrl,
+    });
+  }
+
+  // 使用 Promise.all 并行请求所有分片
+  try {
+    const allComments = await Promise.all(
+      segmentList.map(async (segment) => {
+        log("log", "正在请求弹幕数据...", segment.url);
+        try {
+          // 请求单个分片的弹幕数据
+          let res = await httpGet(segment.url, {
+            headers: {
+              "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+              "Cookie": bilibliCookie
+            },
+            base64Data: true,
+          });
+
+          return parseDanmakuBase64(res.data);
+        } catch (error) {
+          log("error", "请求弹幕数据失败: ", error);
+          return [];
+        }
+      })
+    );
+
+    // 合并所有分片的弹幕数据
+    const mergedComments = allComments.flat();
+    return convertToDanmakuJson(mergedComments, "bilibili");
+
+  } catch (error) {
+    log("error", "获取所有弹幕数据时出错: ", error);
+    return [];
+  }
 }
 
 // =====================
@@ -1300,7 +1489,9 @@ async function fetchYouku(inputUrl) {
   const step = 60; // 每60秒一个分段
   const max_mat = Math.floor(duration / step) + 1;
   let contents = [];
-  for (let mat = 0; mat < max_mat; mat++) {
+
+  // 将构造请求和解析逻辑封装为函数，返回该分段的弹幕数组
+  const requestOneMat = async (mat) => {
     const msg = {
       ctime: Date.now(),
       ctype: 10004,
@@ -1316,17 +1507,11 @@ async function fetchYouku(inputUrl) {
 
     const str = JSON.stringify(msg);
 
-    // 2. 处理 UTF-8 编码（替代 TextEncoder 和 Buffer）
-    // 对于简单的 ASCII 字符串，btoa 可以直接处理
-    // 如果需要支持 UTF-8 字符（例如中文），需要手动编码
     function utf8ToLatin1(str) {
-      // 将 UTF-8 字符串转换为 Latin-1 可用的字符串
-      // 浏览器 btoa 只能处理 Latin-1（0-255 字符码）
       let result = '';
       for (let i = 0; i < str.length; i++) {
         const charCode = str.charCodeAt(i);
         if (charCode > 255) {
-          // 对于非 Latin-1 字符（如中文），可以用 encodeURIComponent 转义
           result += encodeURIComponent(str[i]);
         } else {
           result += str[i];
@@ -1340,32 +1525,24 @@ async function fetchYouku(inputUrl) {
       let output = '';
       let buffer = 0;
       let bufferLength = 0;
-
       for (let i = 0; i < input.length; i++) {
         buffer = (buffer << 8) | input.charCodeAt(i);
         bufferLength += 8;
-
         while (bufferLength >= 6) {
           output += chars[(buffer >> (bufferLength - 6)) & 0x3F];
           bufferLength -= 6;
         }
       }
-
       if (bufferLength > 0) {
         output += chars[(buffer << (6 - bufferLength)) & 0x3F];
       }
-
       while (output.length % 4 !== 0) {
         output += '=';
       }
-
       return output;
     }
 
-    // 3. 转为 Base64 编码
     const msg_b64encode = base64Encode(utf8ToLatin1(str));
-
-    // 4. 将 Base64 编码存入 msg.msg
     msg.msg = msg_b64encode;
     msg.sign = md5(`${msg_b64encode}MkmC9SoIw6xCkSKHhJ7b5D2r51kBiREr`).toString().toLowerCase();
 
@@ -1384,46 +1561,66 @@ async function fetchYouku(inputUrl) {
       jsonpIncPrefix: "utility",
     };
 
-    let queryString = buildQueryString(params);
+    const queryString = buildQueryString(params);
     const url = `${api_danmaku}?${queryString}`;
     log("log", "piece_url: ", url);
 
-    try {
-        const response = await httpPost(url, buildQueryString({ data: data }), {
-          headers: {
-              "Cookie": `_m_h5_tk=${_m_h5_tk};_m_h5_tk_enc=${_m_h5_tk_enc};`,
-              "Referer": "https://v.youku.com",
-              "Content-Type": "application/x-www-form-urlencoded",
-              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.88 Safari/537.36",
-          },
-          allow_redirects: false
-        });
+    const response = await httpPost(url, buildQueryString({ data: data }), {
+      headers: {
+        "Cookie": `_m_h5_tk=${_m_h5_tk};_m_h5_tk_enc=${_m_h5_tk_enc};`,
+        "Referer": "https://v.youku.com",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.88 Safari/537.36",
+      },
+      allow_redirects: false
+    });
 
-        if (response.data.data && response.data.data.result) {
-          const result = JSON.parse(response.data.data.result);
-          if (result.code === "-1") continue;
-          const danmus = result.data.result;
-          for (const danmu of danmus) {
-            const content = {
-                timepoint: 0,	// 弹幕发送时间（秒）
-                ct: 1,	// 弹幕类型，1-3 为滚动弹幕、4 为底部、5 为顶端、6 为逆向、7 为精确、8 为高级
-                size: 25,	//字体大小，25 为中，18 为小
-                color: 16777215,	//弹幕颜色，RGB 颜色转为十进制后的值，16777215 为白色
-                unixtime: Math.floor(Date.now() / 1000),	//Unix 时间戳格式
-                uid: 0,		//发送人的 id
-                content: "",
-            };
-            content.timepoint = danmu.playat / 1000;
-            if (danmu.propertis?.color) {
-              content.color = JSON.parse(danmu.propertis).color;
-            }
-            content.content = danmu.content;
-            contents.push(content);
+    const results = [];
+    if (response.data?.data && response.data.data.result) {
+      const result = JSON.parse(response.data.data.result);
+      if (result.code !== "-1") {
+        const danmus = result.data.result;
+        for (const danmu of danmus) {
+          const content = {
+            timepoint: 0,
+            ct: 1,
+            size: 25,
+            color: 16777215,
+            unixtime: Math.floor(Date.now() / 1000),
+            uid: 0,
+            content: "",
+          };
+          content.timepoint = danmu.playat / 1000;
+          if (danmu.propertis?.color) {
+            content.color = JSON.parse(danmu.propertis).color;
           }
+          if (danmu.propertis?.pos) {
+            const pos = JSON.parse(danmu.propertis).pos;
+            if (pos === 1) content.ct = 5;
+            else if (pos === 2) content.ct = 4;
+          }
+          content.content = danmu.content;
+          results.push(content);
         }
-    } catch (error) {
-        log("error", "请求失败:", error.message); // 输出错误信息
-        return [];
+      }
+    }
+    return results;
+  };
+
+  // 并发限制（可通过环境变量 YOUKU_CONCURRENCY 配置，默认 8）
+  const concurrency = youkuConcurrency;
+  const mats = Array.from({ length: max_mat }, (_, i) => i);
+  for (let i = 0; i < mats.length; i += concurrency) {
+    const batch = mats.slice(i, i + concurrency).map((m) => requestOneMat(m));
+    try {
+      const settled = await Promise.allSettled(batch);
+      for (const s of settled) {
+        if (s.status === "fulfilled" && Array.isArray(s.value)) {
+          contents = contents.concat(s.value);
+        }
+      }
+    } catch (e) {
+      log("error", "优酷分段批量请求失败:", e.message);
     }
   }
 
@@ -2046,40 +2243,45 @@ async function performNetworkSearch(
     minInterval = 500                   // 默认节流间隔（毫秒）
   } = {}
 ) {
-  const url = `https://api.rrmj.plus/m-station/search/drama`;
-  const params = { keywords: keyword, size: 20, order: "match", search_after: "", isExecuteVipActivity: true };
+  try {
+    const url = `https://api.rrmj.plus/m-station/search/drama`;
+    const params = { keywords: keyword, size: 20, order: "match", search_after: "", isExecuteVipActivity: true };
 
-  // 🔒 锁逻辑（可选）
-  if (lockRef) {
-    while (lockRef.value) await new Promise(r => setTimeout(r, 50));
-    lockRef.value = true;
+    // 🔒 锁逻辑（可选）
+    if (lockRef) {
+      while (lockRef.value) await new Promise(r => setTimeout(r, 50));
+      lockRef.value = true;
+    }
+
+    // ⏱️ 节流逻辑（依赖 lastRequestTimeRef）
+    const now = Date.now();
+    const dt = now - lastRequestTimeRef.value;
+    if (dt < minInterval) await new Promise(r => setTimeout(r, minInterval - dt));
+
+    const resp = await renrenRequest("GET", url, params);
+    lastRequestTimeRef.value = Date.now(); // 更新引用
+
+    if (lockRef) lockRef.value = false;
+
+    if (!resp.data) return [];
+
+    const decoded = autoDecode(resp.data);
+    const list = decoded?.data?.searchDramaList || [];
+    return list.map((item, idx) => ({
+      provider: "renren",
+      mediaId: String(item.id),
+      title: String(item.title || "").replace(/<[^>]+>/g, "").replace(/:/g, "："),
+      type: "tv_series",
+      season: null,
+      year: item.year,
+      imageUrl: item.cover,
+      episodeCount: item.episodeTotal,
+      currentEpisodeIndex: episodeInfo?.episode ?? null,
+    }));
+  } catch (error) {
+    log("error", `getRenrenAnimes error: ${error.message}`);
+    return [];
   }
-
-  // ⏱️ 节流逻辑（依赖 lastRequestTimeRef）
-  const now = Date.now();
-  const dt = now - lastRequestTimeRef.value;
-  if (dt < minInterval) await new Promise(r => setTimeout(r, minInterval - dt));
-
-  const resp = await renrenRequest("GET", url, params);
-  lastRequestTimeRef.value = Date.now(); // 更新引用
-
-  if (lockRef) lockRef.value = false;
-
-  if (!resp.data) return [];
-
-  const decoded = autoDecode(resp.data);
-  const list = decoded?.data?.searchDramaList || [];
-  return list.map((item, idx) => ({
-    provider: "renren",
-    mediaId: String(item.id),
-    title: String(item.title || "").replace(/<[^>]+>/g, "").replace(/:/g, "："),
-    type: "tv_series",
-    season: null,
-    year: item.year,
-    imageUrl: item.cover,
-    episodeCount: item.episodeTotal,
-    currentEpisodeIndex: episodeInfo?.episode ?? null,
-  }));
 }
 
 // ---------------------
@@ -2365,158 +2567,183 @@ function matchSeason(anime, queryTitle, season) {
 
 // Extracted function for GET /api/v2/search/anime
 async function searchAnime(url) {
-  let curAnimes = [];
   const queryTitle = url.searchParams.get("keyword");
   log("log", `Search anime with keyword: ${queryTitle}`);
 
-  // 查询vod
-  const animesVod = await getVodAnimes(queryTitle);
-  for (const anime of animesVod) {
-    let vodPlayFromList = anime.vod_play_from.split("$$$")
-    vodPlayFromList = vodPlayFromList.map(item => {
-      if (item === "mgtv") {
-        return "imgo"; // 将mgtv替换为imgo
-      } else if (item === "bilibili") {
-        return "bilibili1"; // 将bilibili替换为bilibili1
-      } else {
-        return item; // 其他情况保持原值
-      }
-    });
+  const curAnimes = [];
 
-    const vodPlayUrlList = anime.vod_play_url.split("$$$")
+  try {
+    // 并行查询不同的来源
+    const [animesVod, animes360, animesRenren] = await Promise.all([
+      getVodAnimes(queryTitle),
+      get360Animes(queryTitle),
+      renrenSearch(queryTitle)
+    ]);
 
-    // 过滤出在allowedPlatforms中的元素，并保持它们在vodPlayFromList中的原始索引
-    const validIndices = vodPlayFromList
+    // 处理Vod来源的结果
+    const processVodAnimes = animesVod.map(async (anime) => {
+      let vodPlayFromList = anime.vod_play_from.split("$$$");
+      vodPlayFromList = vodPlayFromList.map(item => {
+        if (item === "mgtv") return "imgo";
+        if (item === "bilibili") return "bilibili1";
+        return item;
+      });
+
+      const vodPlayUrlList = anime.vod_play_url.split("$$$");
+      const validIndices = vodPlayFromList
         .map((item, index) => allowedPlatforms.includes(item) ? index : -1)
         .filter(index => index !== -1);
 
-    let links = [];
-    let count = 0;
-    for (const num of validIndices) {
-      const platform = vodPlayFromList[num];
-      const eps = vodPlayUrlList[num].split("#");
-      for (const ep of eps) {
-        const epInfo = ep.split("$");
-        count = count + 1;
-        links.push({"name": count, "url": epInfo[1], "title": `【${platform}】${anime.vod_name}(${anime.vod_year}) ${epInfo[0]}`});
-      }
-    }
-
-    let transformedAnime = {
-      animeId: Number(anime.vod_id), // Mapping animeId to id
-      bangumiId: String(anime.vod_id), // Mapping bangumiId to id
-      animeTitle: `${anime.vod_name}(${anime.vod_year})【${anime.type_name}】from vod`, // Mapping animeTitle to titleTxt
-      type: anime.type_name, // Mapping type to cat_name
-      typeDescription: anime.type_name, // Mapping typeDescription to cat_name
-      imageUrl: anime.vod_pic, // Mapping imageUrl to cover
-      startDate: `${anime.vod_year}-01-01T00:00:00`, // Start date to the year field in ISO format
-      episodeCount: links.length, // Mapping episodeCount to length of seriesPlaylinks
-      rating: 0, // Default rating as 0
-      isFavorited: true, // Assuming all anime are favorited by default
-    };
-
-    curAnimes.push(transformedAnime);
-    // Check if the anime already exists in the animes array
-    const exists = animes.some(existingAnime => existingAnime.animeId === transformedAnime.animeId);
-    if (!exists) {
-      const transformedAnimeCopy = { ...transformedAnime, links: links };
-      addAnime(transformedAnimeCopy);
-    }
-    if (animes.length > MAX_ANIMES) {
-      removeEarliestAnime();
-    }
-  }
-
-  // 查询360
-  const animes360 = await get360Animes(queryTitle);
-  for (const anime of animes360) {
-    let links = [];
-    if (anime.cat_name === "电影") {
-      for (const key in Object.keys(anime.playlinks)) {
-        if (allowedPlatforms.includes(key)) {
-          links.push({"name": key, "url": anime.playlinks[key], "title": `【${key}】${anime.titleTxt}(${anime.year})`});
+      let links = [];
+      let count = 0;
+      for (const num of validIndices) {
+        const platform = vodPlayFromList[num];
+        const eps = vodPlayUrlList[num].split("#");
+        for (const ep of eps) {
+          const epInfo = ep.split("$");
+          count++;
+          links.push({
+            "name": count,
+            "url": epInfo[1],
+            "title": `【${platform}】${anime.vod_name}(${anime.vod_year}) ${epInfo[0]}`
+          });
         }
       }
-    } else if (anime.cat_name === "电视剧" || anime.cat_name === "动漫") {
-      if (allowedPlatforms.includes(anime.seriesSite)) {
-        for (let i = 0; i < anime.seriesPlaylinks.length; i++) {
-          const item = anime.seriesPlaylinks[i];
-          links.push({"name": i+1, "url": item.url, "title": `【${anime.seriesSite}】${anime.titleTxt}(${anime.year}) ${i + 1}`});
+
+      if (links.length > 0) {
+        let transformedAnime = {
+          animeId: Number(anime.vod_id),
+          bangumiId: String(anime.vod_id),
+          animeTitle: `${anime.vod_name}(${anime.vod_year})【${anime.type_name}】from vod`,
+          type: anime.type_name,
+          typeDescription: anime.type_name,
+          imageUrl: anime.vod_pic,
+          startDate: `${anime.vod_year}-01-01T00:00:00`,
+          episodeCount: links.length,
+          rating: 0,
+          isFavorited: true,
+        };
+
+        curAnimes.push(transformedAnime);
+        const exists = animes.some(existingAnime => existingAnime.animeId === transformedAnime.animeId);
+        if (!exists) {
+          const transformedAnimeCopy = { ...transformedAnime, links: links };
+          addAnime(transformedAnimeCopy);
         }
+        if (animes.length > MAX_ANIMES) removeEarliestAnime();
       }
-    } else if (anime.cat_name === "综艺") {
-      for (const site of Object.keys(anime.playlinks_year)) {
-        if (allowedPlatforms.includes(site)) {
-          for (const year of anime.playlinks_year[site]) {
-            const subLinks = await get360Zongyi(anime.id, site, year);
-            links = links.concat(subLinks);
+    });
+
+    // 处理360来源的结果
+    const process360Animes = animes360.map(async (anime) => {
+      let links = [];
+      if (anime.cat_name === "电影") {
+        for (const key of Object.keys(anime.playlinks)) {
+          if (allowedPlatforms.includes(key)) {
+            links.push({
+              "name": key,
+              "url": anime.playlinks[key],
+              "title": `【${key}】${anime.titleTxt}(${anime.year})`
+            });
           }
         }
+      } else if (anime.cat_name === "电视剧" || anime.cat_name === "动漫") {
+        if (allowedPlatforms.includes(anime.seriesSite)) {
+          for (let i = 0; i < anime.seriesPlaylinks.length; i++) {
+            const item = anime.seriesPlaylinks[i];
+            links.push({
+              "name": i + 1,
+              "url": item.url,
+              "title": `【${anime.seriesSite}】${anime.titleTxt}(${anime.year}) ${i + 1}`
+            });
+          }
+        }
+      } else if (anime.cat_name === "综艺") {
+        const zongyiLinks = await Promise.all(
+          Object.keys(anime.playlinks_year).map(async (site) => {
+            if (allowedPlatforms.includes(site)) {
+              const yearLinks = await Promise.all(
+                anime.playlinks_year[site].map(async (year) => {
+                  return await get360Zongyi(anime.id, site, year);
+                })
+              );
+              return yearLinks.flat(); // 将每个年份的子链接合并到一个数组
+            }
+            return [];
+          })
+        );
+        links = zongyiLinks.flat(); // 扁平化所有返回的子链接
       }
-    }
 
-    let transformedAnime = {
-      animeId: Number(anime.id), // Mapping animeId to id
-      bangumiId: String(anime.id), // Mapping bangumiId to id
-      animeTitle: `${anime.titleTxt}(${anime.year})【${anime.cat_name}】from 360`, // Mapping animeTitle to titleTxt
-      type: anime.cat_name, // Mapping type to cat_name
-      typeDescription: anime.cat_name, // Mapping typeDescription to cat_name
-      imageUrl: anime.cover, // Mapping imageUrl to cover
-      startDate: `${anime.year}-01-01T00:00:00`, // Start date to the year field in ISO format
-      episodeCount: links.length, // Mapping episodeCount to length of seriesPlaylinks
-      rating: 0, // Default rating as 0
-      isFavorited: true, // Assuming all anime are favorited by default
-    };
+      if (links.length > 0) {
+        let transformedAnime = {
+          animeId: Number(anime.id),
+          bangumiId: String(anime.id),
+          animeTitle: `${anime.titleTxt}(${anime.year})【${anime.cat_name}】from 360`,
+          type: anime.cat_name,
+          typeDescription: anime.cat_name,
+          imageUrl: anime.cover,
+          startDate: `${anime.year}-01-01T00:00:00`,
+          episodeCount: links.length,
+          rating: 0,
+          isFavorited: true,
+        };
 
-    curAnimes.push(transformedAnime);
-    // Check if the anime already exists in the animes array
-    const exists = animes.some(existingAnime => existingAnime.animeId === transformedAnime.animeId);
-    if (!exists) {
-      const transformedAnimeCopy = { ...transformedAnime, links: links };
-      addAnime(transformedAnimeCopy);
-    }
-    if (animes.length > MAX_ANIMES) {
-      removeEarliestAnime();
-    }
-  }
+        curAnimes.push(transformedAnime);
+        const exists = animes.some(existingAnime => existingAnime.animeId === transformedAnime.animeId);
+        if (!exists) {
+          const transformedAnimeCopy = { ...transformedAnime, links: links };
+          addAnime(transformedAnimeCopy);
+        }
+        if (animes.length > MAX_ANIMES) removeEarliestAnime();
+      }
+    });
 
-  // 查询renren
-  const results = await renrenSearch(queryTitle);
-  log("log", "人人视频搜索结果：", results);
+    // 处理Renren来源的结果
+    const processRenrenAnimes = animesRenren.filter(s => s.title.includes(queryTitle)).map(async (anime) => {
+      const eps = await getEpisodes(anime.mediaId);
+      let links = [];
+      for (const ep of eps) {
+        links.push({
+          "name": ep.episodeIndex,
+          "url": ep.episodeId,
+          "title": `【${ep.provider}】${anime.title}(${anime.year}) ${ep.title}`
+        });
+      }
 
-  let animesRenren = results.filter(s => s.title.includes(queryTitle));
-  for (const anime of animesRenren) {
-    const eps = await getEpisodes(anime.mediaId);
-    printFirst200Chars(eps);
+      if (links.length > 0) {
+        let transformedAnime = {
+          animeId: Number(anime.mediaId),
+          bangumiId: String(anime.mediaId),
+          animeTitle: `${anime.title}(${anime.year})【${anime.type}】from renren`,
+          type: anime.type,
+          typeDescription: anime.type,
+          imageUrl: anime.imageUrl,
+          startDate: `${anime.year}-01-01T00:00:00`,
+          episodeCount: links.length,
+          rating: 0,
+          isFavorited: true,
+        };
 
-    let links = [];
-    for (const ep of eps) {
-      links.push({"name": ep.episodeIndex, "url": ep.episodeId, "title": `【${ep.provider}】${anime.title}(${anime.year}) ${ep.title}`});
-    }
+        curAnimes.push(transformedAnime);
+        const exists = animes.some(existingAnime => existingAnime.animeId === transformedAnime.animeId);
+        if (!exists) {
+          const transformedAnimeCopy = { ...transformedAnime, links: links };
+          addAnime(transformedAnimeCopy);
+        }
+        if (animes.length > MAX_ANIMES) removeEarliestAnime();
+      }
+    });
 
-    let transformedAnime = {
-      animeId: Number(anime.mediaId), // Mapping animeId to id
-      bangumiId: String(anime.mediaId), // Mapping bangumiId to id
-      animeTitle: `${anime.title}(${anime.year})【${anime.type}】from renren`, // Mapping animeTitle to titleTxt
-      type: anime.type, // Mapping type to cat_name
-      typeDescription: anime.type, // Mapping typeDescription to cat_name
-      imageUrl: anime.imageUrl, // Mapping imageUrl to cover
-      startDate: `${anime.year}-01-01T00:00:00`, // Start date to the year field in ISO format
-      episodeCount: links.length, // Mapping episodeCount to length of seriesPlaylinks
-      rating: 0, // Default rating as 0
-      isFavorited: true, // Assuming all anime are favorited by default
-    };
+    // 等待所有处理完成
+    await Promise.all([
+      ...processVodAnimes,
+      ...process360Animes,
+      ...processRenrenAnimes
+    ]);
 
-    curAnimes.push(transformedAnime);
-    // Check if the anime already exists in the animes array
-    const exists = animes.some(existingAnime => existingAnime.animeId === transformedAnime.animeId);
-    if (!exists) {
-      const transformedAnimeCopy = { ...transformedAnime, links: links };
-      addAnime(transformedAnimeCopy);
-    }
-    if (animes.length > MAX_ANIMES) {
-      removeEarliestAnime();
-    }
+  } catch (error) {
+    log("error", "发生错误:", error);
   }
 
   return jsonResponse({
@@ -2572,20 +2799,51 @@ async function matchAnime(url, req) {
 
     let resAnime;
     let resEpisode;
-    for (const anime of searchData.animes) {
-      if (anime.animeTitle.includes(title)) {
+
+    if (season && episode) {
+      // 判断剧集
+      for (const anime of searchData.animes) {
+        if (anime.animeTitle.includes(title)) {
+          let originBangumiUrl = new URL(req.url.replace("/match", `bangumi/${anime.bangumiId}`));
+          const bangumiRes = await getBangumi(originBangumiUrl.pathname);
+          const bangumiData = await bangumiRes.json();
+          log("info", "判断剧集", bangumiData);
+          if (bangumiData.bangumi.episodes.length >= episode) {
+            // 先判断season
+            if (matchSeason(anime, title, season)) {
+              resEpisode = bangumiData.bangumi.episodes[episode-1];
+              resAnime = anime;
+              break;
+            }
+          }
+        }
+      }
+    } else {
+      // 判断电影
+      for (const anime of searchData.animes) {
+        const animeTitle = anime.animeTitle.split("(")[0].trim();
+        if (animeTitle === title) {
+          let originBangumiUrl = new URL(req.url.replace("/match", `bangumi/${anime.bangumiId}`));
+          const bangumiRes = await getBangumi(originBangumiUrl.pathname);
+          const bangumiData = await bangumiRes.json();
+          log("info", bangumiData);
+          if (bangumiData.bangumi.episodes.length > 0) {
+            resEpisode = bangumiData.bangumi.episodes[0];
+            resAnime = anime;
+            break;
+          }
+        }
+      }
+    }
+
+    // 如果都没有找到则返回第一个
+    if (!resAnime) {
+      for (const anime of searchData.animes) {
         let originBangumiUrl = new URL(req.url.replace("/match", `bangumi/${anime.bangumiId}`));
         const bangumiRes = await getBangumi(originBangumiUrl.pathname);
         const bangumiData = await bangumiRes.json();
         log("info", bangumiData);
-        if (season && episode && bangumiData.bangumi.episodes.length >= episode) {
-          // 先判断season
-          if (matchSeason(anime, title, season)) {
-            resEpisode = bangumiData.bangumi.episodes[episode-1];
-            resAnime = anime;
-            break;
-          }
-        } else if (bangumiData.bangumi.episodes.length > 0) {
+        if (bangumiData.bangumi.episodes.length > 0) {
           resEpisode = bangumiData.bangumi.episodes[0];
           resAnime = anime;
           break;
@@ -2629,6 +2887,95 @@ async function matchAnime(url, req) {
       400
     );
   }
+}
+
+// Extracted function for GET /api/v2/search/episodes
+async function searchEpisodes(url) {
+  const anime = url.searchParams.get("anime");
+  const episode = url.searchParams.get("episode") || "";
+  
+  log("log", `Search episodes with anime: ${anime}, episode: ${episode}`);
+
+  if (!anime) {
+    log("error", "Missing anime parameter");
+    return jsonResponse(
+      { errorCode: 400, success: false, errorMessage: "Missing anime parameter" },
+      400
+    );
+  }
+
+  // 先搜索动漫
+  let searchUrl = new URL(`/search/anime?keyword=${anime}`, url.origin);
+  const searchRes = await searchAnime(searchUrl);
+  const searchData = await searchRes.json();
+  
+  if (!searchData.success || !searchData.animes || searchData.animes.length === 0) {
+    log("log", "No anime found for the given title");
+    return jsonResponse({
+      errorCode: 0,
+      success: true,
+      errorMessage: "",
+      hasMore: false,
+      animes: []
+    });
+  }
+
+  let resultAnimes = [];
+
+  // 遍历所有找到的动漫，获取它们的集数信息
+  for (const animeItem of searchData.animes) {
+    const bangumiUrl = new URL(`/bangumi/${animeItem.bangumiId}`, url.origin);
+    const bangumiRes = await getBangumi(bangumiUrl.pathname);
+    const bangumiData = await bangumiRes.json();
+    
+    if (bangumiData.success && bangumiData.bangumi && bangumiData.bangumi.episodes) {
+      let filteredEpisodes = bangumiData.bangumi.episodes;
+
+      // 根据 episode 参数过滤集数
+      if (episode) {
+        if (episode === "movie") {
+          // 仅保留剧场版结果
+          filteredEpisodes = bangumiData.bangumi.episodes.filter(ep => 
+            animeItem.typeDescription && (
+              animeItem.typeDescription.includes("电影") || 
+              animeItem.typeDescription.includes("剧场版") ||
+              ep.episodeTitle.toLowerCase().includes("movie") ||
+              ep.episodeTitle.includes("剧场版")
+            )
+          );
+        } else if (/^\d+$/.test(episode)) {
+          // 纯数字，仅保留指定集数
+          const targetEpisode = parseInt(episode);
+          filteredEpisodes = bangumiData.bangumi.episodes.filter(ep => 
+            parseInt(ep.episodeNumber) === targetEpisode
+          );
+        }
+      }
+
+      // 只有当过滤后还有集数时才添加到结果中
+      if (filteredEpisodes.length > 0) {
+        resultAnimes.push({
+          animeId: animeItem.animeId,
+          animeTitle: animeItem.animeTitle,
+          type: animeItem.type,
+          typeDescription: animeItem.typeDescription,
+          episodes: filteredEpisodes.map(ep => ({
+            episodeId: ep.episodeId,
+            episodeTitle: ep.episodeTitle
+          }))
+        });
+      }
+    }
+  }
+
+  log("log", `Found ${resultAnimes.length} animes with filtered episodes`);
+
+  return jsonResponse({
+    errorCode: 0,
+    success: true,
+    errorMessage: "",
+    animes: resultAnimes
+  });
 }
 
 // Extracted function for GET /api/v2/bangumi/:animeId
@@ -2737,6 +3084,8 @@ async function handleRequest(req, env) {
   token = resolveToken(env);  // 每次请求动态获取，确保热更新环境变量后也能生效
   otherServer = resolveOtherServer(env);
   vodServer = resolveVodServer(env);
+  bilibliCookie = resolveBilibiliCookie(env);
+  youkuConcurrency = resolveYoukuConcurrency(env);
 
   const url = new URL(req.url);
   let path = url.pathname;
@@ -2774,7 +3123,7 @@ async function handleRequest(req, env) {
   // 移除 token 部分，剩下的才是真正的路径
   path = "/" + parts.slice(1).join("/");
 
-  console.log(path);
+  log("log", path);
 
   // GET /
   if (path === "/" && method === "GET") {
@@ -2784,6 +3133,11 @@ async function handleRequest(req, env) {
   // GET /api/v2/search/anime
   if (path === "/api/v2/search/anime" && method === "GET") {
     return searchAnime(url);
+  }
+
+  // GET /api/v2/search/episodes
+  if (path === "/api/v2/search/episodes" && method === "GET") {
+    return searchEpisodes(url);
   }
 
   // GET /api/v2/match
@@ -2815,6 +3169,8 @@ async function handleRequest(req, env) {
   return jsonResponse({ message: "Not found" }, 404);
 }
 
+
+
 // --- Cloudflare Workers 入口 ---
 export default {
   async fetch(request, env, ctx) {
@@ -2842,5 +3198,5 @@ export async function vercelHandler(req, res) {
 }
 
 // 为了测试导出 handleRequest
-export { handleRequest, searchAnime, matchAnime, getBangumi, getComment, fetchTencentVideo, fetchIqiyi, fetchMangoTV,
-  fetchBilibili, fetchYouku, fetchOtherServer, httpGet, httpPost };
+export { handleRequest, searchAnime, searchEpisodes, matchAnime, getBangumi, getComment, fetchTencentVideo, fetchIqiyi,
+  fetchMangoTV, fetchBilibili, fetchYouku, fetchOtherServer, httpGet, httpPost };

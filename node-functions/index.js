@@ -13,7 +13,14 @@ export const onRequest = async (context) => {
   // 构造完整的 URL
   let fullUrl;
   try {
-    fullUrl = new URL(request.url, baseUrl).toString();
+    let targetUrl = request.url;
+
+    // 判断是否包含 node-functions/index.js，如果是则用 / 代替
+    if (request.url.includes('node-functions/index.js')) {
+      targetUrl = '/';
+    }
+
+    fullUrl = new URL(targetUrl, baseUrl).toString();
     console.log('Request fullUrl:', fullUrl);
   } catch (error) {
     console.error('URL Construction Error:', error);
@@ -24,7 +31,7 @@ export const onRequest = async (context) => {
   const modifiedRequest = new Request(fullUrl, {
     method: request.method,
     headers: request.headers,
-    body: request.body,
+    body: JSON.stringify(request.body),
     redirect: request.redirect,
     credentials: request.credentials,
     cache: request.cache,
