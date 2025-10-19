@@ -1,15 +1,6 @@
-// 加载 .env 文件（仅在 Node.js 环境中有效，Cloudflare Workers 会忽略）
-if (typeof process !== "undefined" && process.env && !process.env.CLOUDFLARE_ENVIRONMENT) {
-  try {
-    require('dotenv').config();
-  } catch (e) {
-    // dotenv 未安装或加载失败，继续执行
-  }
-}
-
 // 全局状态（Cloudflare 和 Vercel 都可能重用实例）
 // ⚠️ 不是持久化存储，每次冷启动会丢失
-const VERSION = "1.4.1";
+const VERSION = "1.4.2";
 let animes = [];
 let episodeIds = [];
 let episodeNum = 10001; // 全局变量，用于自增 ID
@@ -339,8 +330,8 @@ function resolveEnableEpisodeFilter(env) {
   return DEFAULT_ENABLE_EPISODE_FILTER;
 }
 
-// 日志级别配置（默认 warn，可选值：error, warn, info）
-const DEFAULT_LOG_LEVEL = "warn";
+// 日志级别配置（默认 info，可选值：error, warn, info）
+const DEFAULT_LOG_LEVEL = "info";
 let logLevel = DEFAULT_LOG_LEVEL;
 
 function resolveLogLevel(env) {
@@ -389,6 +380,34 @@ function resolveCommentCacheMinutes(env) {
     if (!Number.isNaN(n) && n > 0) return n;
   }
   return DEFAULT_COMMENT_CACHE_MINUTES;
+}
+
+// 顶部/底部弹幕转换为浮动弹幕配置（默认 false，禁用转换）
+const DEFAULT_CONVERT_TOP_BOTTOM_TO_SCROLL = false;
+let convertTopBottomToScroll = DEFAULT_CONVERT_TOP_BOTTOM_TO_SCROLL;
+
+function resolveConvertTopBottomToScroll(env) {
+  if (env && env.CONVERT_TOP_BOTTOM_TO_SCROLL !== undefined) {
+    return env.CONVERT_TOP_BOTTOM_TO_SCROLL.toLowerCase() === 'true';
+  }
+  if (typeof process !== "undefined" && process.env?.CONVERT_TOP_BOTTOM_TO_SCROLL !== undefined) {
+    return process.env.CONVERT_TOP_BOTTOM_TO_SCROLL.toLowerCase() === 'true';
+  }
+  return DEFAULT_CONVERT_TOP_BOTTOM_TO_SCROLL;
+}
+
+// 彩色弹幕转换为纯白弹幕配置（默认 false，禁用转换）
+const DEFAULT_CONVERT_COLOR_TO_WHITE = false;
+let convertColorToWhite = DEFAULT_CONVERT_COLOR_TO_WHITE;
+
+function resolveConvertColorToWhite(env) {
+  if (env && env.CONVERT_COLOR_TO_WHITE !== undefined) {
+    return env.CONVERT_COLOR_TO_WHITE.toLowerCase() === 'true';
+  }
+  if (typeof process !== "undefined" && process.env?.CONVERT_COLOR_TO_WHITE !== undefined) {
+    return process.env.CONVERT_COLOR_TO_WHITE.toLowerCase() === 'true';
+  }
+  return DEFAULT_CONVERT_COLOR_TO_WHITE;
 }
 
 // =====================
@@ -1525,25 +1544,20 @@ function convertToDanmakuJson(contents, platform) {
 
   for (const item of items) {
     let attributes, m;
+    let time, mode, color;
 
     // 新增：处理新格式的弹幕数据
     if ("progress" in item && "mode" in item && "content" in item) {
       // 处理新格式的弹幕对象
-      attributes = [
-        (item.progress / 1000).toFixed(2), // progress 转换为秒
-        item.mode || 1,
-        item.color || 16777215,
-        `[${platform}]`
-      ].join(",");
+      time = (item.progress / 1000).toFixed(2);
+      mode = item.mode || 1;
+      color = item.color || 16777215;
       m = item.content;
     } else if ("timepoint" in item) {
       // 处理对象数组输入
-      attributes = [
-        parseFloat(item.timepoint).toFixed(2),
-        item.ct || 0,
-        item.color || 16777215,
-        `[${platform}]`
-      ].join(",");
+      time = parseFloat(item.timepoint).toFixed(2);
+      mode = item.ct || 0;
+      color = item.color || 16777215;
       m = item.content;
     } else {
       if (!("p" in item)) {
@@ -1551,23 +1565,22 @@ function convertToDanmakuJson(contents, platform) {
       }
       // 处理 XML 解析后的格式
       const pValues = item.p.split(",");
+      time = parseFloat(pValues[0]).toFixed(2);
+      mode = pValues[1] || 0;
       if (pValues.length === 4) {
-        attributes = [
-          parseFloat(pValues[0]).toFixed(2),
-          pValues[1] || 0,
-          pValues[2] || 16777215,
-          `[${platform}]`
-        ].join(",");
+        color = pValues[2] || 16777215;
       } else {
-        attributes = [
-          parseFloat(pValues[0]).toFixed(2),
-          pValues[1] || 0,
-          pValues[3] || 16777215,
-          `[${platform}]`
-        ].join(",");
+        color = pValues[3] || 16777215;
       }
       m = item.m;
     }
+
+    attributes = [
+      time,
+      mode,
+      color,
+      `[${platform}]`
+    ].join(",");
 
     danmus.push({ p: attributes, m, cid: cidCounter++ });
   }
@@ -1601,12 +1614,56 @@ function convertToDanmakuJson(contents, platform) {
   log("info", `去重分钟数: ${groupMinute}`);
   const groupedDanmus = groupDanmusByMinute(filteredDanmus, groupMinute);
 
+  // 应用弹幕转换规则（在去重之后）
+  let convertedDanmus = groupedDanmus;
+  if (convertTopBottomToScroll || convertColorToWhite) {
+    let topBottomCount = 0;
+    let colorCount = 0;
+
+    convertedDanmus = groupedDanmus.map(danmu => {
+      const pValues = danmu.p.split(',');
+      if (pValues.length < 3) return danmu;
+
+      let mode = parseInt(pValues[1], 10);
+      let color = parseInt(pValues[2], 10);
+      let modified = false;
+
+      // 1. 将顶部/底部弹幕转换为浮动弹幕
+      if (convertTopBottomToScroll && (mode === 4 || mode === 5)) {
+        topBottomCount++;
+        mode = 1;
+        modified = true;
+      }
+
+      // 2. 将彩色弹幕转换为纯白弹幕
+      if (convertColorToWhite && color !== 16777215) {
+        colorCount++;
+        color = 16777215;
+        modified = true;
+      }
+
+      if (modified) {
+        const newP = [pValues[0], mode, color, ...pValues.slice(3)].join(',');
+        return { ...danmu, p: newP };
+      }
+      return danmu;
+    });
+
+    // 统计输出转换结果
+    if (topBottomCount > 0) {
+      log("info", `[danmu convert] 转换了 ${topBottomCount} 条顶部/底部弹幕为浮动弹幕`);
+    }
+    if (colorCount > 0) {
+      log("info", `[danmu convert] 转换了 ${colorCount} 条彩色弹幕为纯白弹幕`);
+    }
+  }
+
   log("info", `danmus_original: ${danmus.length}`);
   log("info", `danmus_filter: ${filteredDanmus.length}`);
   log("info", `danmus_group: ${groupedDanmus.length}`);
   // 输出前五条弹幕
-  log("info", "Top 5 danmus:", JSON.stringify(groupedDanmus.slice(0, 5), null, 2));
-  return groupedDanmus;
+  log("info", "Top 5 danmus:", JSON.stringify(convertedDanmus.slice(0, 5), null, 2));
+  return convertedDanmus;
 }
 
 function buildQueryString(params) {
@@ -2816,6 +2873,47 @@ async function fetchMangoTV(inputUrl) {
 
   // 返回结果
   return convertToDanmakuJson(contents, "mango");
+}
+
+// =====================
+// 解析 b23.tv 短链接
+// =====================
+
+async function resolveB23Link(shortUrl) {
+  try {
+    log("info", `正在解析 b23.tv 短链接: ${shortUrl}`);
+
+    // 设置超时时间（默认5秒）
+    const timeout = parseInt(process.env.VOD_REQUEST_TIMEOUT || '5000');
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+    // 使用原生 fetch 获取重定向后的 URL
+    // fetch 默认会自动跟踪重定向，response.url 会是最终的 URL
+    const response = await fetch(shortUrl, {
+      method: 'GET',
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+      },
+      signal: controller.signal,
+      redirect: 'follow'
+    });
+
+    clearTimeout(timeoutId);
+
+    // 获取最终的 URL（重定向后的 URL）
+    const finalUrl = response.url;
+    if (finalUrl && finalUrl !== shortUrl) {
+      log("info", `b23.tv 短链接已解析为: ${finalUrl}`);
+      return finalUrl;
+    }
+
+    log("error", "无法解析 b23.tv 短链接");
+    return shortUrl; // 如果解析失败，返回原 URL
+  } catch (error) {
+    log("error", "解析 b23.tv 短链接失败:", error);
+    return shortUrl; // 如果出错，返回原 URL
+  }
 }
 
 // =====================
@@ -4764,15 +4862,25 @@ async function handleBahamutAnimes(animesBahamut, queryTitle, curAnimes) {
     .map(async (anime) => {
       const epData = await getBahamutEpisodes(anime.video_sn);
       const detail = epData.video;
-      const eps = epData.anime.episodes["0"]
+
+      // 处理 episodes 对象中的多个键（"0", "1", "2" 等）
+      // 某些内容（如电影）可能在不同的键中
+      let eps = null;
+      if (epData.anime.episodes) {
+        // 优先使用 "0" 键，如果不存在则使用第一个可用的键
+        eps = epData.anime.episodes["0"] || Object.values(epData.anime.episodes)[0];
+      }
+
       let links = [];
-      for (const ep of eps) {
-        const epTitle = `第${ep.episode}集`;
-        links.push({
-          "name": ep.episode,
-          "url": ep.videoSn.toString(),
-          "title": `【bahamut】 ${epTitle}`
-        });
+      if (eps && Array.isArray(eps)) {
+        for (const ep of eps) {
+          const epTitle = `第${ep.episode}集`;
+          links.push({
+            "name": ep.episode,
+            "url": ep.videoSn.toString(),
+            "title": `【bahamut】 ${epTitle}`
+          });
+        }
       }
 
       if (links.length > 0) {
@@ -5485,7 +5593,11 @@ async function getComment(path) {
     danmus = await fetchIqiyi(url);
   } else if (url.includes('.mgtv.com')) {
     danmus = await fetchMangoTV(url);
-  } else if (url.includes('.bilibili.com')) {
+  } else if (url.includes('.bilibili.com') || url.includes('b23.tv')) {
+    // 如果是 b23.tv 短链接，先解析为完整 URL
+    if (url.includes('b23.tv')) {
+      url = await resolveB23Link(url);
+    }
     danmus = await fetchBilibili(url);
   } else if (url.includes('.youku.com')) {
     danmus = await fetchYouku(url);
@@ -5579,6 +5691,10 @@ async function getCommentByUrl(req) {
     } else if (url.includes('.mgtv.com')) {
       danmus = await fetchMangoTV(url);
     } else if (url.includes('.bilibili.com') || url.includes('b23.tv')) {
+      // 如果是 b23.tv 短链接，先解析为完整 URL
+      if (url.includes('b23.tv')) {
+        url = await resolveB23Link(url);
+      }
       danmus = await fetchBilibili(url);
     } else if (url.includes('.youku.com')) {
       danmus = await fetchYouku(url);
@@ -5649,6 +5765,10 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
   envs["searchCacheMinutes"] = searchCacheMinutes;
   commentCacheMinutes = resolveCommentCacheMinutes(env);
   envs["commentCacheMinutes"] = commentCacheMinutes;
+  convertTopBottomToScroll = resolveConvertTopBottomToScroll(env);
+  envs["convertTopBottomToScroll"] = convertTopBottomToScroll;
+  convertColorToWhite = resolveConvertColorToWhite(env);
+  envs["convertColorToWhite"] = convertColorToWhite;
   redisUrl = resolveRedisUrl(env);
   envs["redisUrl"] = encryptStr(redisUrl);
   redisToken = resolveRedisToken(env);
@@ -5934,4 +6054,4 @@ export { handleRequest, searchAnime, searchEpisodes, matchAnime, getBangumi, get
   fetchMangoTV, fetchBilibili, fetchYouku, fetchOtherServer, httpGet, httpPost, hanjutvSearch, getHanjutvEpisodes,
   getHanjutvComments, getHanjutvDetail, bahamutSearch, getBahamutEpisodes, getBahamutComments, tencentSearch, getTencentEpisodes,
   pingRedis, getRedisKey, setRedisKey, setRedisKeyWithExpiry, getSearchCache, setSearchCache, isSearchCacheValid,
-  getCommentCache, setCommentCache, isCommentCacheValid};
+  getCommentCache, setCommentCache, isCommentCacheValid, resolveB23Link};
