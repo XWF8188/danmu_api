@@ -41,13 +41,14 @@ LogVar 弹幕 API 服务器
   - 查询参数：`?format=xml` 或 `?format=json`（优先级最高）
   - 优先级：查询参数 > 环境变量 > 默认值
   - 示例：`GET /api/v2/comment/10001?format=xml` 返回 XML 格式弹幕
+  - **XML 格式说明**：完全遵循 Bilibili 标准格式，8字段标准弹幕属性
 - **日志记录**：捕获 `console.log`（info 级别）和 `console.error`（error 级别），JSON 内容格式化输出。
 - **智能缓存管理**：支持内存缓存搜索结果和弹幕数据，避免短期内重复的不必要API请求。包括：
   - 搜索结果缓存（可通过 `SEARCH_CACHE_MINUTES` 配置，默认1分钟）
   - 弹幕缓存（可通过 `COMMENT_CACHE_MINUTES` 配置，默认5分钟）
   - 用户偏好记录（可通过 `MAX_LAST_SELECT_MAP` 配置，默认100条）
   - Redis 分布式缓存支持（可选）
-- **部署支持**：支持本地运行、Docker 容器化、Vercel 一键部署、Netlify 一键部署、Cloudflare 一键部署和 Docker 一键启动。
+- **部署支持**：支持本地运行、Docker 容器化、Vercel 一键部署、Netlify 一键部署、Edgeone 一键部署、Cloudflare 一键部署、Claw部署和 Docker 一键启动。
 - **手动选择记忆**：支持记住之前搜索title时手动选择的anime，并在后续的match自动匹配时优选该anime【实验性】。
 - **手动搜索支持输入播放链接获取弹幕**：支持手动搜索的播放器输入爱优腾芒哔播放链接可获取弹幕，如`senplayer`。
 - **弹幕转换功能**：支持通过环境变量配置弹幕转换规则，包括：
@@ -260,6 +261,35 @@ LogVar 弹幕 API 服务器
 <img src="https://i.mji.rip/2025/09/14/9fdf945fb247994518042691f60d7849.jpeg" style="width:400px" />
 <img src="https://i.mji.rip/2025/09/14/dbacc0cf9c8a839f16b8960de1f38f11.jpeg" style="width:400px" />
 4. 现已支持手动搜索标题输入爱优腾芒哔播放链接获取弹幕。
+
+### XML 格式说明
+
+API 支持返回 Bilibili 标准 XML 格式的弹幕数据，通过查询参数 `?format=xml` 指定。
+
+**XML 格式示例**：
+```xml
+<?xml version="1.0" ?>
+<i>
+    <d p="5.0,5,25,16488046,1751533608,0,0,13190629936">有 162 条弹幕来袭~请做好准备🔥！</d>
+    <d p="4.0,5,25,13818234,1751533608,0,0,84261947057">阿姐我来啦！[打call了]</d>
+    <d p="5.0,1,25,16488046,1751533608,0,0,33648506749">2025-07-02打卡</d>
+</i>
+```
+
+**属性 `p` 字段说明**（8个字段，逗号分隔）：
+1. **时间**：弹幕出现时间（秒）
+2. **类型**：1=滚动, 4=底部, 5=顶部
+3. **字体**：字体大小（25=中, 18=小）
+4. **颜色**：RGB 转十进制（16777215=白色）
+5. **时间戳**：Unix 时间戳（秒）
+6. **弹幕池**：弹幕池编号（通常为0）
+7. **用户Hash**：用户唯一标识（数字格式）
+8. **弹幕ID**：弹幕唯一编号（11位数字）
+
+**使用示例**：
+- 获取 JSON 格式：`GET /api/v2/comment/10001`
+- 获取 XML 格式：`GET /api/v2/comment/10001?format=xml`
+- 通过 URL 获取 XML：`POST /api/v2/comment/by-url?format=xml` （body: `{"videoUrl":"..."}`）
 
 > 注意：
 >
