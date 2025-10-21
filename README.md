@@ -17,7 +17,7 @@ LogVar 弹幕 API 服务器
 
 ---
 
-一个人人都能部署的基于 js 的弹幕 API 服务器，支持爱优腾芒哔人韩巴弹幕直接获取，兼容弹弹play的搜索、详情查询和弹幕获取接口，并提供日志记录，支持vercel/cloudflare/docker/claw等部署方式，不用提前下载弹幕，没有nas或小鸡也能一键部署。
+一个人人都能部署的基于 js 的弹幕 API 服务器，支持爱优腾芒哔人韩巴弹幕直接获取，兼容弹弹play的搜索、详情查询和弹幕获取接口规范，并提供日志记录，支持vercel/netlify/edgeone/cloudflare/docker/claw等部署方式，不用提前下载弹幕，没有nas或小鸡也能一键部署。
 
 本项目仅为个人爱好开发，代码开源。如有任何侵权行为，请联系本人删除。
 
@@ -30,12 +30,17 @@ LogVar 弹幕 API 服务器
 ## 功能
 - **API 接口**：
   - `GET /api/v2/search/anime?keyword=${queryTitle}`：根据关键字搜索动漫。
-  - `POST /api/v2/match`：根据关键字匹配动漫，用于自动匹配。（目前已支持在match接口中通过@语法动态指定平台优先级，如`赴山海 S01E28 @qiyi`）
+  - `POST /api/v2/match`：根据关键字匹配动漫，用于自动匹配。（已支持在match接口中通过@语法动态指定平台优先级，如`赴山海 S01E28 @qiyi`；已支持从网盘资源命名，如`无忧渡.S01E01.2160p.WEB-DL.H265.DDP.5.1`中提取 title/season/episode）
   - `GET /api/v2/search/episodes`：根据关键词搜索所有匹配的剧集信息。
   - `GET /api/v2/bangumi/:animeId`：获取指定动漫的详细信息。
   - `GET /api/v2/comment/:commentId?withRelated=true&chConvert=1`：获取指定弹幕评论，支持返回相关评论和字符转换。
   - `POST /api/v2/comment/by-url`：通过视频URL直接获取弹幕。
   - `GET /api/logs`：获取最近的日志（最多 500 行，格式为 `[时间戳] 级别: 消息`）。
+- **弹幕格式输出**：支持 JSON 和 XML 两种格式输出，通过以下方式配置：
+  - 环境变量：`DANMU_OUTPUT_FORMAT=json|xml`（默认：json）
+  - 查询参数：`?format=xml` 或 `?format=json`（优先级最高）
+  - 优先级：查询参数 > 环境变量 > 默认值
+  - 示例：`GET /api/v2/comment/10001?format=xml` 返回 XML 格式弹幕
 - **日志记录**：捕获 `console.log`（info 级别）和 `console.error`（error 级别），JSON 内容格式化输出。
 - **智能缓存管理**：支持内存缓存搜索结果和弹幕数据，避免短期内重复的不必要API请求。包括：
   - 搜索结果缓存（可通过 `SEARCH_CACHE_MINUTES` 配置，默认1分钟）
@@ -109,7 +114,7 @@ LogVar 弹幕 API 服务器
 
    **热更新支持**：如需支持环境变量热更新（修改 `.env` 文件后无需重启容器），请使用 Volume 挂载：
    ```bash
-   docker run -d -p 9321:9321 --name danmu-api -v $(pwd)/.env:/app/danmu_api/.env --env-file .env danmu-api
+   docker run -d -p 9321:9321 --name danmu-api -v $(pwd)/.env:/app/.env --env-file .env danmu-api
    ```
 
    > **推荐**：使用 docker compose 部署可以更方便地管理配置和支持热更新，详见下方"Docker 一键启动"部分。
@@ -132,7 +137,7 @@ LogVar 弹幕 API 服务器
 
    **热更新支持**：如需支持环境变量热更新（修改 `.env` 文件后无需重启容器），请使用 Volume 挂载：
    ```bash
-   docker run -d -p 9321:9321 --name danmu-api -v $(pwd)/.env:/app/danmu_api/.env --env-file .env logvar/danmu-api:latest
+   docker run -d -p 9321:9321 --name danmu-api -v $(pwd)/.env:/app/.env --env-file .env logvar/danmu-api:latest
    ```
 
    或使用 docker compose 部署（**推荐，支持环境变量热更新**）：
@@ -144,7 +149,7 @@ LogVar 弹幕 API 服务器
          - "9321:9321"
        # 热更新支持：挂载 .env 文件，修改后容器会自动重新加载配置（无需重启容器）
        volumes:
-         - ./.env:/app/danmu_api/.env
+         - ./.env:/app/.env
        restart: unless-stopped
    ```
 
@@ -284,9 +289,11 @@ LogVar 弹幕 API 服务器
 | GROUP_MINUTE    | 【可选】合并去重分钟数，表示按n分钟分组后对弹幕合并去重，默认为1，最大值为30，0表示不去重       |
 | CONVERT_TOP_BOTTOM_TO_SCROLL    | 【可选】是否将顶部和底部弹幕转换为浮动弹幕，默认为`false`（不转换），启用后顶部弹幕（ct=5）和底部弹幕（ct=4）会被转换为浮动弹幕（ct=1），可选值：`true`、`false`       |
 | CONVERT_COLOR_TO_WHITE    | 【可选】是否将彩色弹幕转换为纯白弹幕，默认为`false`（不转换），启用后所有非白色的弹幕颜色会被转换为纯白色（16777215），可选值：`true`、`false`       |
+| DANMU_OUTPUT_FORMAT    | 【可选】弹幕输出格式，默认为`json`，可选值：`json`（JSON格式）、`xml`（XML格式），支持通过查询参数`?format=xml`或`?format=json`覆盖此设置，优先级：查询参数 > 环境变量 > 默认值       |
 | PROXY_URL    | 【可选】代理地址，示例: `http://127.0.0.1:7897` ，目前只对巴哈姆特生效（注意：如果巴哈姆特请求不通，会拖慢搜索返回速度，所以除vercel/netlify/cloudflare之外默认不开启bahamut源，开启请先在SOURCE_ORDER环境变量中添加`bahamut`）如果你使用docker部署并且访问不了bahamut源，请配置代理地址；vercel/netlify/cf中理应都自然能联通，不用填写       |
+| TMDB_API_KEY    | 【可选】TMDB API Key地址，目前只对巴哈姆特生效，配置后当巴哈第一次搜索无结果时自动从TMDB获取日语原名搜索，可以解决巴哈译名不同导致的搜索无结果问题，例如大陆常用译名`间谍过家家`在巴哈译名为`間諜家家酒`，正常搜索无法搜索到，配置后可以解决这一问题但会稍微影响请求速度，[TMDBAPI](https://www.themoviedb.org/settings/api)获取方法参考：[TMDB API Key申请 - 绿联NAS私有云](https://www.ugnas.com/tutorial-detail/id-226.html)       |
 | RATE_LIMIT_MAX_REQUESTS    | 【可选】限流配置：1分钟内同一IP最大请求次数，默认为`3`，设置为`0`表示不限流       |
-| LOG_LEVEL    | 【可选】日志级别，默认为`warn`，可选值：`error`（仅错误）、`warn`（错误和警告）、`info`（所有日志），生产环境建议使用`warn`，调试时使用`info`       |
+| LOG_LEVEL    | 【可选】日志级别，默认为`info`，可选值：`error`（仅错误）、`warn`（错误和警告）、`info`（所有日志），生产环境建议使用`warn`，调试时使用`info`       |
 | SEARCH_CACHE_MINUTES    | 【可选】搜索结果缓存时间（分钟），默认为`1`，避免短期内重复的不必要API请求，同时保证获取最新的结果列表，可根据需要调整：Vercel/Cloudflare建议`1-5`分钟，Docker可设置`5-30`分钟，设置为`0`表示不缓存       |
 | COMMENT_CACHE_MINUTES    | 【可选】弹幕缓存时间（分钟），默认为`1`，弹幕数据的缓存时间，独立于搜索结果缓存       |
 | MAX_LAST_SELECT_MAP    | 【可选】最后选择映射缓存大小限制，默认为`100`，lastSelectMap最多保存的条目数，超过限制时删除最早的条目（FIFO），用于存储查询关键字上次选择的animeId       |
