@@ -33,7 +33,7 @@ LogVar 弹幕 API 服务器
   - `POST /api/v2/match`：根据关键字匹配动漫，用于自动匹配。（已支持在match接口中通过@语法动态指定平台优先级，如`赴山海 S01E28 @qiyi`；已支持从网盘资源命名，如`无忧渡.S01E01.2160p.WEB-DL.H265.DDP.5.1`中提取 title/season/episode）
   - `GET /api/v2/search/episodes`：根据关键词搜索所有匹配的剧集信息。
   - `GET /api/v2/bangumi/:animeId`：获取指定动漫的详细信息。
-  - `GET /api/v2/comment/:commentId?withRelated=true&chConvert=1`：获取指定弹幕评论，支持返回相关评论和字符转换。
+  - `GET /api/v2/comment/:commentId?format=json`：获取指定弹幕评论，支持返回相关评论和字符转换。
   - `POST /api/v2/comment/by-url`：通过视频URL直接获取弹幕。
   - `GET /api/logs`：获取最近的日志（最多 500 行，格式为 `[时间戳] 级别: 消息`）。
 - **弹幕格式输出**：支持 JSON 和 XML 两种格式输出，通过以下方式配置：
@@ -96,7 +96,7 @@ LogVar 弹幕 API 服务器
    - `POST http://{ip}:9321/87654321/api/v2/match`
    - `GET http://{ip}:9321/87654321/api/v2/search/episodes?anime=生万物`
    - `GET http://{ip}:9321/87654321/api/v2/bangumi/1`
-   - `GET http://{ip}:9321/87654321/api/v2/comment/1?withRelated=true&chConvert=1`
+   - `GET http://{ip}:9321/87654321/api/v2/comment/1?format=json`
    - `POST http://{ip}:9321/87654321/api/v2/comment/by-url`
    - `GET http://{ip}:9321/87654321/api/logs`
 
@@ -242,8 +242,8 @@ LogVar 弹幕 API 服务器
   4. 保存并部署。
 - 示例请求：`https://{your_domain}.workers.dev/87654321/api/v2/search/anime?keyword=子夜归`
 
-### 手动部署
-创建一个worker，将`danmu_api/worker.js`里的代码直接拷贝到你创建的`worker.js`里，然后点击部署。
+### ~~手动部署~~
+~~创建一个worker，将`danmu_api/worker.js`里的代码直接拷贝到你创建的`worker.js`里，然后点击部署。~~
 
 > cf部署可能不稳定，推荐用vercel/netlify部署。
 
@@ -308,13 +308,14 @@ API 支持返回 Bilibili 标准 XML 格式的弹幕数据，通过查询参数 
 | OTHER_SERVER   | 【可选】兜底第三方弹幕服务器，不填默认为`https://api.danmu.icu`       |
 | VOD_SERVERS      | 【可选】VOD服务器列表，支持多个服务器并发查询，格式：`名称@URL,名称@URL,...`，示例：`金蝉@https://zy.jinchancaiji.com,789@https://www.caiji.cyou,听风@https://gctf.tfdh.top`，不填默认为`金蝉@https://zy.jinchancaiji.com,789@https://www.caiji.cyou,听风@https://gctf.tfdh.top`       |
 | VOD_RETURN_MODE      | 【可选】VOD返回模式，可选值：`all`（返回所有站点结果）、`fastest`（只返回最快的站点结果），默认为`fastest`。当配置多个VOD站点时，`all`模式会返回所有站点的结果（结果较多），`fastest`模式只返回首先响应成功的站点结果（结果较少，避免重复）       |
-| VOD_REQUEST_TIMEOUT      | 【可选】VOD服务器单个请求超时时间（毫秒），防止慢速或失效的采集站阻塞搜索，默认为`5000`（5秒），建议值：`3000-10000`       |
+| VOD_REQUEST_TIMEOUT      | 【可选】VOD服务器单个请求超时时间（毫秒），防止慢速或失效的采集站阻塞搜索，默认为`10000`（10秒），建议值：`5000-15000`。由于`fastest`模式只返回最快响应的站点，可以设置较大的超时时间给慢速站点更多机会       |
 | BILIBILI_COOKIE      | 【可选】b站cookie（填入后能抓取完整弹幕），如 `buvid3=E2BCA ... eao6; theme-avatar-tip-show=SHOWED`，请自行通过浏览器或抓包工具抓取，热心网友测试后，实际最少只需取 `SESSDATA=xxxx` 字段    |
 | YOUKU_CONCURRENCY    | 【可选】youku弹幕请求并发数，用于加快youku弹幕请求速度，不填默认为`8`，最高`16`       |
-| SOURCE_ORDER    | 【可选】源排序，用于按源对返回资源的排序（注意：先后顺序会影响自动匹配最终的返回），默认是`360,vod,renren,hanjutv`，表示360数据排在最前，hanjutv数据排在最后，示例：`360,renren`：只返回360数据和renren数据，且360数据靠前；当前可选择的源字段有 `360,vod,tencent,renren,hanjutv,bahamut`       |
+| SOURCE_ORDER    | 【可选】源排序，用于按源对返回资源的排序（注意：先后顺序会影响自动匹配最终的返回），默认是`360,vod,renren,hanjutv`，表示360数据排在最前，hanjutv数据排在最后，示例：`360,renren`：只返回360数据和renren数据，且360数据靠前；当前可选择的源字段有 `360,vod,tencent,youku,iqiyi,imgo,bilibili,renren,hanjutv,bahamut`       |
 | PLATFORM_ORDER    | 【可选】自动匹配优选平台，按顺序优先返回指定平台弹幕，默认为空，即返回第一个满足条件的平台，示例：`bilibili1,qq`，表示如果有b站的播放源，则优先返回b站的弹幕，否则就返回腾讯的弹幕，两者都没有，则返回第一个满足条件的平台；当前可选择的平台字段有 `qiyi, bilibili1, imgo, youku, qq, renren, hanjutv, bahamut`  |
 | EPISODE_TITLE_FILTER    | 【可选】剧集标题正则过滤，按正则关键字对剧集或综艺的集标题进行过滤，适用于过滤一些预告或综艺非正式集，只支持match自动匹配，默认值如下 |
 | ENABLE_EPISODE_FILTER    | 【可选】是否在手动选择接口中启用集标题过滤，默认为`false`（禁用），启用后 GET /api/v2/bangumi/{id} 和 GET /api/v2/search/anime 接口会过滤掉预告、花絮等特殊集，以及名称包含特殊关键词的动漫。       |
+| STRICT_TITLE_MATCH    | 【可选】是否启用严格标题匹配模式，默认为`false`（宽松模糊匹配），启用后只匹配标题开头或完全匹配的结果。例如：搜索"遮天"时，`false`会匹配"古惑仔3之只手遮天"，`true`只匹配"遮天"、"遮天 第一季"等。可选值：`true`、`false`       |
 | BLOCKED_WORDS    | 【可选】弹幕屏蔽词列表，默认为空，示例如下       |
 | GROUP_MINUTE    | 【可选】合并去重分钟数，表示按n分钟分组后对弹幕合并去重，默认为1，最大值为30，0表示不去重       |
 | CONVERT_TOP_BOTTOM_TO_SCROLL    | 【可选】是否将顶部和底部弹幕转换为浮动弹幕，默认为`false`（不转换），启用后顶部弹幕（ct=5）和底部弹幕（ct=4）会被转换为浮动弹幕（ct=1），可选值：`true`、`false`       |
@@ -367,6 +368,10 @@ API 支持返回 Bilibili 标准 XML 格式的弹幕数据，通过查询参数 
 | 360      | qiyi, bilibili1, imgo, youku, qq |
 | vod      | qiyi, bilibili1, imgo, youku, qq |
 | tencent  | qq |
+| youku    | youku |
+| iqiyi    | qiyi |
+| imgo     | imgo |
+| bilibili | bilibili1 |
 | renren   | renren |
 | hanjutv  | hanjutv |
 | bahamut  | bahamut |
@@ -379,10 +384,39 @@ danmu_api/
 │       ├── docker-image.yml
 │       └── sync_fork.yml # vercel自动同步配置文件
 ├── danmu_api/
+│   └── apis/
+│       └── dandan-api.js # 弹弹play兼容接口函数
+│   └── configs/
+│       ├── envs.js       # 环境变量处理脚本
+│       └── globals.js    # 全局变量处理脚本
+│   └── sources/
+│       ├── bahamut.js    # 巴哈姆特源
+│       ├── base.js       # 弹幕源获取基类
+│       ├── bilibili.js   # b站源
+│       ├── hanjutv.js    # 韩剧TV源
+│       ├── iqiyi.js      # 爱奇艺源
+│       ├── kan360.js     # 360看源
+│       ├── mango.js      # 芒果TV源
+│       ├── other.js      # 第三方弹幕服务器
+│       ├── renren.js     # 人人视频源
+│       ├── tencent.js    # 腾讯视频源
+│       ├── vod.js        # vod源
+│       └── youku.js      # 优酷源
+│   └── utils/
+│       ├── cache-util.js    # 缓存数据处理工具
+│       ├── codec-util.js    # 编解码工具
+│       ├── common-util.js   # 通用工具
+│       ├── danmu-util.js    # 弹幕处理工具
+│       ├── http-util.js     # 请求工具
+│       ├── log-util.js      # 日志工具
+│       ├── redis-util.js    # redis工具
+│       ├── time-util.js     # 时间日期工具
+│       ├── tmdb-util.js     # tmdb处理工具
+│       └── zh-util.js       # 中文繁简转换工具
 │   ├── esm-shim.js     # Node.js低版本兼容层
 │   ├── server.js       # 本地node启动脚本
 │   ├── worker.js       # 主 API 服务器代码
-│   ├── worker.test.js  # 测试文件
+│   └── worker.test.js  # 测试文件
 ├── netlify/
 │   └── functions/
 │       └── api.js      # netlify 中间处理逻辑
