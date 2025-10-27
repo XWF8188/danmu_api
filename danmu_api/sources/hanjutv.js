@@ -221,7 +221,7 @@ export default class HanjutvSource extends BaseSource {
   formatComments(comments) {
     return comments.map(c => ({
       cid: Number(c.did),
-      p: `${(c.t / 1000).toFixed(2)},${c.tp},${Number(c.sc)},[hanjutv]`,
+      p: `${(c.t / 1000).toFixed(2)},${c.tp === 2 ? 5 : c.tp},${Number(c.sc)},[hanjutv]`,
       m: c.con,
       t: Math.round(c.t / 1000)
     }));

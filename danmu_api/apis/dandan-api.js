@@ -414,9 +414,23 @@ export async function matchAnime(url, req) {
     const regex = /^(.+?)[.\s]+S(\d+)E(\d+)/i;
     const match = cleanFileName.match(regex);
 
-    let title = match ? match[1].trim() : cleanFileName;
-    let season = match ? parseInt(match[2]) : null;
-    let episode = match ? parseInt(match[3]) : null;
+    let title, season, episode;
+
+    if (match) {
+      // 匹配到 S##E## 格式
+      title = match[1].trim();
+      season = parseInt(match[2]);
+      episode = parseInt(match[3]);
+    } else {
+      // 没有 S##E## 格式，尝试提取第一个片段作为标题
+      // 匹配第一个中文/英文标题部分（在年份、分辨率等技术信息之前）
+      const titleRegex = /^([^.\s]+(?:[.\s][^.\s]+)*?)(?:[.\s](?:\d{4}|(?:19|20)\d{2}|\d{3,4}p|S\d+|E\d+|WEB|BluRay|Blu-ray|HDTV|DVDRip|BDRip|x264|x265|H\.?264|H\.?265|AAC|AC3|DDP|TrueHD|DTS|10bit|HDR|60FPS))/i;
+      const titleMatch = cleanFileName.match(titleRegex);
+
+      title = titleMatch ? titleMatch[1].replace(/[._]/g, ' ').trim() : cleanFileName;
+      season = null;
+      episode = null;
+    }
 
     log("info", "Parsed title, season, episode", { title, season, episode });
 
@@ -753,8 +767,8 @@ export async function getComment(path, queryFormat) {
   return formatDanmuResponse(responseData, queryFormat);
 }
 
-// Extracted function for POST /api/v2/comment/by-url
-export async function getCommentByUrl(req, queryFormat) {
+// Extracted function for GET /api/v2/comment?url=xxx
+export async function getCommentByUrl(videoUrl, queryFormat) {
   const tencentSource = new TencentSource();
   const iqiyiSource = new IqiyiSource();
   const mangoSource = new MangoSource();
@@ -763,25 +777,22 @@ export async function getCommentByUrl(req, queryFormat) {
   const otherSource = new OtherSource();
 
   try {
-    // 获取请求体
-    const body = await req.json();
-
-    // 验证请求体是否有效
-    if (!body || !body.videoUrl) {
-      log("error", "Missing videoUrl parameter in request body");
+    // 验证URL参数
+    if (!videoUrl || typeof videoUrl !== 'string') {
+      log("error", "Missing or invalid url parameter");
       return jsonResponse(
-        { errorCode: 400, success: false, errorMessage: "Missing videoUrl parameter", count: 0, comments: [] },
+        { errorCode: 400, success: false, errorMessage: "Missing or invalid url parameter", count: 0, comments: [] },
         400
       );
     }
 
-    const videoUrl = body.videoUrl.trim();
+    videoUrl = videoUrl.trim();
 
     // 验证URL格式
     if (!videoUrl.startsWith('http')) {
-      log("error", "Invalid videoUrl format");
+      log("error", "Invalid url format, must start with http or https");
       return jsonResponse(
-        { errorCode: 400, success: false, errorMessage: "Invalid videoUrl format", count: 0, comments: [] },
+        { errorCode: 400, success: false, errorMessage: "Invalid url format, must start with http or https", count: 0, comments: [] },
         400
       );
     }
@@ -844,7 +855,7 @@ export async function getCommentByUrl(req, queryFormat) {
     };
     return formatDanmuResponse(responseData, queryFormat);
   } catch (error) {
-    // 处理 JSON 解析错误或其他异常
+    // 处理异常
     log("error", `Failed to process comment by URL request: ${error.message}`);
     return jsonResponse(
       { errorCode: 500, success: false, errorMessage: "Internal server error", count: 0, comments: [] },
