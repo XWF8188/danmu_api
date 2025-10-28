@@ -3,6 +3,8 @@
  * 提供获取和设置环境变量的函数，支持 Cloudflare Workers 和 Node.js
  */
 export class Envs {
+  static env;
+
   // 记录获取过的环境变量
   static accessedEnvVars = new Map();
 
@@ -19,10 +21,10 @@ export class Envs {
    */
   static get(key, defaultValue, type = 'string', encrypt = false) {
     let value;
-    if (typeof env !== 'undefined' && env[key]) {
-      value = env[key]; // Cloudflare Workers
+    if (typeof this.env !== 'undefined' && this.env[key]) {
+      value = this.env[key];
     } else if (typeof process !== 'undefined' && process.env?.[key]) {
-      value = process.env[key]; // Node.js
+      value = process.env[key];
     } else {
       value = defaultValue;
     }
@@ -36,7 +38,7 @@ export class Envs {
         }
         break;
       case 'boolean':
-        parsedValue = value === 'true' || value === '1';
+        parsedValue = value === true || value === 'true'|| value === 1 || value === '1';
         break;
       case 'string':
       default:
@@ -176,6 +178,7 @@ export class Envs {
    * @returns {Object} 配置对象
    */
   static load(env = {}, deployPlatform = 'node') {
+    this.env = env;
     return {
       vodAllowedPlatforms: this.VOD_ALLOWED_PLATFORMS,
       allowedPlatforms: this.ALLOWED_PLATFORMS,
@@ -191,7 +194,8 @@ export class Envs {
       episodeTitleFilter: this.resolveEpisodeTitleFilter(env), // 剧集标题正则过滤
       blockedWords: this.get('BLOCKED_WORDS', '', 'string'), // 屏蔽词列表
       groupMinute: Math.min(this.get('GROUP_MINUTE', 1, 'number'), 30), // 分钟内合并去重（默认 1，最大值30，0表示不去重）
-      proxyUrl: this.get('PROXY_URL', '', 'string'), // 代理地址
+      proxyUrl: this.get('PROXY_URL', '', 'string', true), // 代理/反代地址
+      danmuSimplified: this.get('DANMU_SIMPLIFIED', true, 'boolean'), // 弹幕繁体转简体开关
       tmdbApiKey: this.get('TMDB_API_KEY', '', 'string', true), // TMDB API KEY
       redisUrl: this.get('UPSTASH_REDIS_REST_URL', '', 'string', true), // upstash redis url
       redisToken: this.get('UPSTASH_REDIS_REST_TOKEN', '', 'string', true), // upstash redis url
