@@ -311,7 +311,7 @@ API 支持返回 Bilibili 标准 XML 格式的弹幕数据，通过查询参数 
 | VOD_REQUEST_TIMEOUT      | 【可选】VOD服务器单个请求超时时间（毫秒），防止慢速或失效的采集站阻塞搜索，默认为`10000`（10秒），建议值：`5000-15000`。由于`fastest`模式只返回最快响应的站点，可以设置较大的超时时间给慢速站点更多机会       |
 | BILIBILI_COOKIE      | 【可选】b站cookie（填入后能抓取完整弹幕），如 `buvid3=E2BCA ... eao6; theme-avatar-tip-show=SHOWED`，请自行通过浏览器或抓包工具抓取，热心网友测试后，实际最少只需取 `SESSDATA=xxxx` 字段    |
 | YOUKU_CONCURRENCY    | 【可选】youku弹幕请求并发数，用于加快youku弹幕请求速度，不填默认为`8`，最高`16`       |
-| SOURCE_ORDER    | 【可选】源排序，用于按源对返回资源的排序（注意：先后顺序会影响自动匹配最终的返回），默认是`360,vod,renren,hanjutv`，表示360数据排在最前，hanjutv数据排在最后，示例：`360,renren`：只返回360数据和renren数据，且360数据靠前；当前可选择的源字段有 `360,vod,tencent,youku,iqiyi,imgo,bilibili,renren,hanjutv,bahamut`       |
+| SOURCE_ORDER    | 【可选】源排序，用于按源对返回资源的排序（注意：先后顺序会影响自动匹配最终的返回），默认是`360,vod,renren,hanjutv`，表示360数据排在最前，hanjutv数据排在最后，示例：`360,renren`：只返回360数据和renren数据，且360数据靠前；当前可选择的源字段有 `360,vod,douban,tencent,youku,iqiyi,imgo,bilibili,renren,hanjutv,bahamut`       |
 | PLATFORM_ORDER    | 【可选】自动匹配优选平台，按顺序优先返回指定平台弹幕，默认为空，即返回第一个满足条件的平台，示例：`bilibili1,qq`，表示如果有b站的播放源，则优先返回b站的弹幕，否则就返回腾讯的弹幕，两者都没有，则返回第一个满足条件的平台；当前可选择的平台字段有 `qiyi, bilibili1, imgo, youku, qq, renren, hanjutv, bahamut`  |
 | EPISODE_TITLE_FILTER    | 【可选】剧集标题正则过滤，按正则关键字对剧集或综艺的集标题进行过滤，适用于过滤一些预告或综艺非正式集，只支持match自动匹配，默认值如下 |
 | ENABLE_EPISODE_FILTER    | 【可选】是否在手动选择接口中启用集标题过滤，默认为`false`（禁用），启用后 GET /api/v2/bangumi/{id} 和 GET /api/v2/search/anime 接口会过滤掉预告、花絮等特殊集，以及名称包含特殊关键词的动漫。       |
@@ -328,6 +328,7 @@ API 支持返回 Bilibili 标准 XML 格式的弹幕数据，通过查询参数 
 | LOG_LEVEL    | 【可选】日志级别，默认为`info`，可选值：`error`（仅错误）、`warn`（错误和警告）、`info`（所有日志），生产环境建议使用`warn`，调试时使用`info`       |
 | SEARCH_CACHE_MINUTES    | 【可选】搜索结果缓存时间（分钟），默认为`1`，避免短期内重复的不必要API请求，同时保证获取最新的结果列表，可根据需要调整：Vercel/Cloudflare建议`1-5`分钟，Docker可设置`5-30`分钟，设置为`0`表示不缓存       |
 | COMMENT_CACHE_MINUTES    | 【可选】弹幕缓存时间（分钟），默认为`1`，弹幕数据的缓存时间，独立于搜索结果缓存       |
+| REMEMBER_LAST_SELECT    | 【可选】是否记住手动选择结果，用于match自动匹配时优选上次的选择，默认为`true`，表示记住，请注意，该功能为实验性功能，会记住某个剧上次选择的结果作为下次自动匹配的优选，如不需要，请关闭       |
 | MAX_LAST_SELECT_MAP    | 【可选】最后选择映射缓存大小限制，默认为`100`，lastSelectMap最多保存的条目数，超过限制时删除最早的条目（FIFO），用于存储查询关键字上次选择的animeId       |
 | UPSTASH_REDIS_REST_URL    | 【可选】Upstash redis url，需配合UPSTASH_REDIS_REST_TOKEN使用，用于持久化存储，不会因为冷启动而丢失过去的查询信息（在cf/eo/claw上配置后应该能更稳定点，也能解决小幻掉匹配的问题，但会稍微影响请求速度），获取方法请参考：`https://cloud.tencent.cn/developer/article/2424508`       |
 | UPSTASH_REDIS_REST_TOKEN    | 【可选】Upstash redis token，需配合UPSTASH_REDIS_REST_URL使用，用于持久化存储，不会因为冷启动而丢失过去的查询信息（在cf/eo/claw上配置后应该能更稳定点，也能解决小幻掉匹配的问题，但会稍微影响请求速度），获取方法请参考：`https://cloud.tencent.cn/developer/article/2424508`       |
@@ -368,6 +369,7 @@ API 支持返回 Bilibili 标准 XML 格式的弹幕数据，通过查询参数 
 | ----------- | ----------- |
 | 360      | qiyi, bilibili1, imgo, youku, qq |
 | vod      | qiyi, bilibili1, imgo, youku, qq |
+| douban   | qiyi, bilibili1, youku, qq |
 | tencent  | qq |
 | youku    | youku |
 | iqiyi    | qiyi |
@@ -390,10 +392,13 @@ danmu_api/
 │   └── configs/
 │       ├── envs.js       # 环境变量处理脚本
 │       └── globals.js    # 全局变量处理脚本
+│   └── models/
+│       └── dandan-model.js  # 弹弹play数据模型
 │   └── sources/
 │       ├── bahamut.js    # 巴哈姆特源
 │       ├── base.js       # 弹幕源获取基类
 │       ├── bilibili.js   # b站源
+│       ├── douban.js     # 豆瓣源
 │       ├── hanjutv.js    # 韩剧TV源
 │       ├── iqiyi.js      # 爱奇艺源
 │       ├── kan360.js     # 360看源

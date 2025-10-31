@@ -10,6 +10,7 @@ import { formatDanmuResponse } from "../utils/danmu-util.js";
 import { extractTitle, convertChineseNumber, parseFileName, createDynamicPlatformOrder } from "../utils/common-util.js";
 import Kan360Source from "../sources/kan360.js";
 import VodSource from "../sources/vod.js";
+import DoubanSource from "../sources/douban.js";
 import RenrenSource from "../sources/renren.js";
 import HanjutvSource from "../sources/hanjutv.js";
 import BahamutSource from "../sources/bahamut.js";
@@ -36,6 +37,7 @@ const iqiyiSource = new IqiyiSource();
 const mangoSource = new MangoSource();
 const bilibiliSource = new BilibiliSource();
 const otherSource = new OtherSource();
+const doubanSource = new DoubanSource(tencentSource, iqiyiSource, youkuSource, bilibiliSource);
 
 function matchSeason(anime, queryTitle, season) {
   if (anime.animeTitle.includes(queryTitle)) {
@@ -139,6 +141,7 @@ export async function searchAnime(url) {
     const requestPromises = globals.sourceOrderArr.map(source => {
       if (source === "360") return kan360Source.search(queryTitle);
       if (source === "vod") return vodSource.search(queryTitle);
+      if (source === "douban") return doubanSource.search(queryTitle);
       if (source === "renren") return renrenSource.search(queryTitle);
       if (source === "hanjutv") return hanjutvSource.search(queryTitle);
       if (source === "bahamut") return bahamutSource.search(queryTitle);
@@ -162,8 +165,9 @@ export async function searchAnime(url) {
 
     // 解构出返回的结果
     const {
-      vod: animesVodResults, 360: animes360, renren: animesRenren, hanjutv: animesHanjutv, bahamut: animesBahamut,
-      tencent: animesTencent, youku: animesYouku, iqiyi: animesIqiyi, imgo: animesImgo, bilibili: animesBilibili
+      vod: animesVodResults, 360: animes360, douban: animesDouban, renren: animesRenren, hanjutv: animesHanjutv,
+      bahamut: animesBahamut, tencent: animesTencent, youku: animesYouku, iqiyi: animesIqiyi, imgo: animesImgo,
+      bilibili: animesBilibili
     } = resultData;
 
     // 按顺序处理每个来源的结果
@@ -180,6 +184,9 @@ export async function searchAnime(url) {
             }
           }
         }
+      } else if (key === 'douban') {
+        // 等待处理Douban来源
+        await doubanSource.handleAnimes(animesDouban, queryTitle, curAnimes);
       } else if (key === 'renren') {
         // 等待处理Renren来源
         await renrenSource.handleAnimes(animesRenren, queryTitle, curAnimes);
@@ -283,7 +290,7 @@ async function matchAniAndEp(season, episode, searchData, title, req, platform, 
   if (season && episode) {
     // 判断剧集
     for (const anime of searchData.animes) {
-      if (preferAnimeId && anime.bangumiId.toString() !== preferAnimeId.toString()) continue;
+      if (globals.rememberLastSelect && preferAnimeId && anime.bangumiId.toString() !== preferAnimeId.toString()) continue;
       if (anime.animeTitle.includes(title)) {
         let originBangumiUrl = new URL(req.url.replace("/match", `bangumi/${anime.bangumiId}`));
         const bangumiRes = await getBangumi(originBangumiUrl.pathname);
@@ -325,7 +332,7 @@ async function matchAniAndEp(season, episode, searchData, title, req, platform, 
   } else {
     // 判断电影
     for (const anime of searchData.animes) {
-      if (preferAnimeId && anime.bangumiId.toString() !== preferAnimeId.toString()) continue;
+      if (globals.rememberLastSelect && preferAnimeId && anime.bangumiId.toString() !== preferAnimeId.toString()) continue;
       const animeTitle = anime.animeTitle.split("(")[0].trim();
       if (animeTitle === title) {
         let originBangumiUrl = new URL(req.url.replace("/match", `bangumi/${anime.bangumiId}`));

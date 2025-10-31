@@ -94,7 +94,7 @@ export default class VodSource extends BaseSource {
   }
 
   async search(keyword) {
-      if (!globals.vodServers || globals.vodServers.length === 0) {
+    if (!globals.vodServers || globals.vodServers.length === 0) {
       return [];
     }
 
@@ -135,7 +135,7 @@ export default class VodSource extends BaseSource {
           const epInfo = ep.split("$");
           count++;
           links.push({
-            "name": count,
+            "name": count.toString(),
             "url": epInfo[1],
             "title": `【${platform}】 ${epInfo[0]}`
           });
