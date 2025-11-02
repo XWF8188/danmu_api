@@ -200,9 +200,9 @@ LogVar 弹幕 API 服务器
 - 示例请求：`https://{your_domain}.vercel.app/87654321/api/v2/search/anime?keyword=子夜归`
 
 ### 优化点
-- Settings > Functions > Advanced Setting > Function Region 切换为 Hong Kong，能提高访问速度，体验更优
-  > hk有可能访问不了360或其他源，可以尝试切其他region，如新加坡等
-- vercel在国内被墙，请配合代理使用或绑定自定义域名
+- Settings > Functions > Advanced Setting > Function Region 切换为 新加坡/韩国/日本等，能提高访问速度，体验更优
+  > hk有可能访问不了360或其他源，可以尝试切其他region
+- vercel在国内被墙，请配合代理或绑定自定义域名使用
 
 ## 部署到 Netlify 【推荐】
 

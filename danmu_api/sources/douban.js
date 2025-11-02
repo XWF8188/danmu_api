@@ -64,8 +64,10 @@ export default class DoubanSource extends BaseSource {
 
     const processDoubanAnimes = await Promise.allSettled(sourceAnimes.map(async (anime) => {
       try {
+        if (anime?.layout !== "subject") return;
         const doubanId = anime.target_id;
-        log("info", "doubanId: ", doubanId);
+        let animeType = anime?.type_name;
+        log("info", "doubanId: ", doubanId, anime?.target?.title, animeType);
 
         // 获取平台详情页面url
         const response = await httpGet(
@@ -86,10 +88,39 @@ export default class DoubanSource extends BaseSource {
             continue;
           }
           log("info", "vendor uri: ", vendor.uri);
+
+          if (response.data?.genres.includes('真人秀')) {
+            animeType = "综艺";
+          } else if (response.data?.genres.includes('纪录片')) {
+            animeType = "纪录片";
+          } else if (animeType === "电视剧" && response.data?.genres.includes('动画')
+              && response.data?.countries.some(country => country.includes('中国'))) {
+            animeType = "国漫";
+          } else if (animeType === "电视剧" && response.data?.genres.includes('动画')
+              && response.data?.countries.includes('日本')) {
+            animeType = "日番";
+          } else if (animeType === "电视剧" && response.data?.genres.includes('动画')) {
+            animeType = "动漫";
+          } else if (animeType === "电影" && response.data?.genres.includes('动画')) {
+            animeType = "动画电影";
+          } else if (animeType === "电影" && response.data?.countries.some(country => country.includes('中国'))) {
+            animeType = "华语电影";
+          } else if (animeType === "电影") {
+            animeType = "外语电影";
+          } else if (animeType === "电视剧" && response.data?.countries.some(country => country.includes('中国'))) {
+            animeType = "国产剧";
+          } else if (animeType === "电视剧" && response.data?.countries.some(country => ['日本', '韩国'].includes(country))) {
+            animeType = "日韩剧";
+          } else if (animeType === "电视剧" && response.data?.countries.some(country =>
+            ['美国', '英国', '加拿大', '法国', '德国', '意大利', '西班牙', '澳大利亚'].includes(country)
+          )) {
+            animeType = "欧美剧";
+          }
+
           const tmpAnimes = [{
             title: response.data?.title,
             year: response.data?.year,
-            type: anime?.type_name,
+            type: animeType,
             imageUrl: anime?.target?.cover_url,
           }];
           switch (vendor.id) {

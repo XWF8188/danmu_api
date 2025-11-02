@@ -154,10 +154,7 @@ export class Episodes {
   // ---- 转换为纯 JSON ----
   toJson() {
     return {
-      animeId: this.animeId,
-      animeTitle: this.animeTitle,
-      type: this.type,
-      typeDescription: this.typeDescription,
+      ...this,
       episodes: this.episodes.map(ep => ep.toJson())
     };
   }
@@ -265,16 +262,7 @@ export class Bangumi {
   // ---- 转换为纯 JSON ----
   toJson() {
     return {
-      animeId: this.animeId,
-      bangumiId: this.bangumiId,
-      animeTitle: this.animeTitle,
-      imageUrl: this.imageUrl,
-      isOnAir: this.isOnAir,
-      airDay: this.airDay,
-      isFavorited: this.isFavorited,
-      rating: this.rating,
-      type: this.type,
-      typeDescription: this.typeDescription,
+      ...this,
       seasons: this.seasons.map(season => season.toJson()),  // 转换每个 season 为 JSON
       episodes: this.episodes.map(ep => ep.toJson())  // 转换每个 episode 为 JSON
     };
