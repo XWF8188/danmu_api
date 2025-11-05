@@ -104,7 +104,8 @@ export async function getTmdbJaOriginalTitle(title, signal = null) {
     };
 
     // 第一步：TMDB搜索
-    const searchUrlZh = `https://api.tmdb.org/3/search/multi?api_key=${globals.tmdbApiKey}&query=${encodeURIComponent(title)}&language=zh-CN`;
+    const targetSearchUrl = `https://api.tmdb.org/3/search/multi?api_key=${globals.tmdbApiKey}&query=${encodeURIComponent(title)}&language=zh-CN`;
+    const searchUrlZh = globals.proxyUrl ? `http://127.0.0.1:5321/proxy?url=${encodeURIComponent(targetSearchUrl)}` : targetSearchUrl;
     log("info", `[TMDB] 正在搜索: ${title}`);
 
     // 内部中断检查
@@ -157,7 +158,8 @@ export async function getTmdbJaOriginalTitle(title, signal = null) {
 
     // 第四步：获取日语详情
     const mediaType = bestMatch.media_type || (bestMatch.name ? "tv" : "movie");
-    const detailUrl = `https://api.tmdb.org/3/${mediaType}/${bestMatch.id}?api_key=${globals.tmdbApiKey}&language=ja-JP`;
+    const targetDetailUrl = `https://api.tmdb.org/3/${mediaType}/${bestMatch.id}?api_key=${globals.tmdbApiKey}&language=ja-JP`;
+    const detailUrl = globals.proxyUrl ? `http://127.0.0.1:5321/proxy?url=${encodeURIComponent(targetDetailUrl)}` : targetDetailUrl;
 
     // 内部中断检查
     if (signal && signal.aborted) {
