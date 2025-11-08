@@ -58,6 +58,7 @@ export default class DoubanSource extends BaseSource {
         if (anime?.layout !== "subject") return;
         const doubanId = anime.target_id;
         let animeType = anime?.type_name;
+        if (animeType !== "电影" && animeType !== "电视剧") return;
         log("info", "doubanId: ", doubanId, anime?.target?.title, animeType);
 
         // 获取平台详情页面url
@@ -111,7 +112,7 @@ export default class DoubanSource extends BaseSource {
               if (cid) {
                 tmpAnimes[0].provider = "tencent";
                 tmpAnimes[0].mediaId = cid;
-                await this.tencentSource.handleAnimes(tmpAnimes, queryTitle, doubanAnimes)
+                await this.tencentSource.handleAnimes(tmpAnimes, response.data?.title, doubanAnimes)
               }
               break;
             }
@@ -120,7 +121,7 @@ export default class DoubanSource extends BaseSource {
               if (tvid) {
                 tmpAnimes[0].provider = "iqiyi";
                 tmpAnimes[0].mediaId = anime?.type_name === '电影' ? `movie_${tvid}` : tvid;
-                await this.iqiyiSource.handleAnimes(tmpAnimes, queryTitle, doubanAnimes)
+                await this.iqiyiSource.handleAnimes(tmpAnimes, response.data?.title, doubanAnimes)
               }
               break;
             }
@@ -129,7 +130,7 @@ export default class DoubanSource extends BaseSource {
               if (showId) {
                 tmpAnimes[0].provider = "youku";
                 tmpAnimes[0].mediaId = showId;
-                await this.youkuSource.handleAnimes(tmpAnimes, queryTitle, doubanAnimes)
+                await this.youkuSource.handleAnimes(tmpAnimes, response.data?.title, doubanAnimes)
               }
               break;
             }
@@ -138,7 +139,7 @@ export default class DoubanSource extends BaseSource {
               if (seasonId) {
                 tmpAnimes[0].provider = "bilibili";
                 tmpAnimes[0].mediaId = `ss${seasonId}`;
-                await this.bilibiliSource.handleAnimes(tmpAnimes, queryTitle, doubanAnimes)
+                await this.bilibiliSource.handleAnimes(tmpAnimes, response.data?.title, doubanAnimes)
               }
               break;
             }
