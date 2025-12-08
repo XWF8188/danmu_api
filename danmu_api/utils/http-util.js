@@ -199,11 +199,14 @@ export async function httpPost(url, body, options = {}) {
 
       clearTimeout(timeoutId);
 
+      const data = await response.text();
+
+
       if (!response.ok) {
+        log("error", `[请求模拟] response data: `, data);
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      const data = await response.text();
       let parsedData;
       try {
         parsedData = JSON.parse(data);  // 尝试将文本解析为 JSON
@@ -258,6 +261,79 @@ export async function httpPost(url, body, options = {}) {
   // 所有重试都失败，抛出最后一个错误
   log("error", `[请求模拟] 所有重试均失败 (${maxRetries + 1} 次尝试)`);
   throw lastError;
+}
+
+/**
+ * 通用 HTTP 请求函数（模拟环境返回结构）
+ * @param {string} method - HTTP 方法
+ * @param {string} url - 请求地址
+ * @param {any} [body] - 请求体（可选）
+ * @param {object} [options] - 选项
+ * @param {object} [options.headers] - 请求头
+ * @param {object} [options.params] - 查询参数（暂未实现）
+ * @param {boolean} [options.allow_redirects=true] - 是否允许重定向（暂未实现）
+ * @returns {Promise<{data: any, status: number, headers: Record<string, string>}>}
+ */
+async function httpRequestMethod(method, url, body, options = {}) {
+  log("info", `[请求模拟] HTTP ${method}: ${url}`);
+
+  const { headers = {}, params, allow_redirects = true } = options;
+
+  const fetchOptions = {
+    method,
+    headers: { ...headers },
+  };
+
+  // 只有在 body 存在时才设置（DELETE 通常无 body）
+  if (body !== undefined && body !== null) {
+    fetchOptions.body = body;
+  }
+
+  try {
+    const response = await fetch(url, fetchOptions);
+    const textData = await response.text();
+
+    if (!response.ok) {
+      log("error", `[请求模拟] response data: `, textData);
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    let parsedData;
+    try {
+      parsedData = JSON.parse(textData);
+    } catch (e) {
+      parsedData = textData;
+    }
+
+    return {
+      data: parsedData,
+      status: response.status,
+      headers: Object.fromEntries(response.headers.entries())
+    };
+  } catch (error) {
+    log("error", `[请求模拟] 请求失败:`, error.message);
+    log("error", '详细诊断:');
+    log("error", '- URL:', url);
+    log("error", '- 错误类型:', error.name);
+    log("error", '- 消息:', error.message);
+    if (error.cause) {
+      log("error", '- 码:', error.cause?.code);
+      log("error", '- 原因:', error.cause?.message);
+    }
+    throw error;
+  }
+}
+
+export async function httpPatch(url, body, options = {}) {
+  return httpRequestMethod('PATCH', url, body, options);
+}
+
+export async function httpPut(url, body, options = {}) {
+  return httpRequestMethod('PUT', url, body, options);
+}
+
+export async function httpDelete(url, options = {}) {
+  return httpRequestMethod('DELETE', url, undefined, options); // DELETE 不传 body
 }
 
 export async function getPageTitle(url) {

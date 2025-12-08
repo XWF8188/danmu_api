@@ -6,6 +6,7 @@ export class Envs {
   static env;
 
   // 记录获取过的环境变量
+  static originalEnvVars = new Map();
   static accessedEnvVars = new Map();
 
   static VOD_ALLOWED_PLATFORMS = ['qiyi', 'bilibili1', 'imgo', 'youku', 'qq']; // vod允许的播放平台
@@ -23,10 +24,13 @@ export class Envs {
     let value;
     if (typeof this.env !== 'undefined' && this.env[key]) {
       value = this.env[key];
+      this.originalEnvVars.set(key, value);
     } else if (typeof process !== 'undefined' && process.env?.[key]) {
       value = process.env[key];
+      this.originalEnvVars.set(key, value);
     } else {
       value = defaultValue;
+      this.originalEnvVars.set(key, "");
     }
 
     let parsedValue;
@@ -75,10 +79,9 @@ export class Envs {
 
   /**
    * 解析 VOD 服务器配置
-   * @param {Object} env 环境对象
    * @returns {Array} 服务器列表
    */
-  static resolveVodServers(env) {
+  static resolveVodServers() {
     const defaultVodServers = '金蝉@https://zy.jinchancaiji.com,789@https://www.caiji.cyou,听风@https://gctf.tfdh.top';
     let vodServersConfig = this.get('VOD_SERVERS', defaultVodServers, 'string');
 
@@ -102,11 +105,9 @@ export class Envs {
 
   /**
    * 解析源排序
-   * @param {Object} env 环境对象
-   * @param {string} deployPlatform 部署平台
    * @returns {Array} 源排序数组
    */
-  static resolveSourceOrder(env, deployPlatform) {
+  static resolveSourceOrder() {
     let sourceOrder = this.get('SOURCE_ORDER', '360,vod,renren,hanjutv', 'string');
 
     const orderArr = sourceOrder
@@ -121,10 +122,9 @@ export class Envs {
 
   /**
    * 解析平台排序
-   * @param {Object} env 环境对象
    * @returns {Array} 平台排序数组
    */
-  static resolvePlatformOrder(env) {
+  static resolvePlatformOrder() {
     const orderArr = this.get('PLATFORM_ORDER', '', 'string')
       .split(',')
       .map(s => s.trim())
@@ -137,10 +137,9 @@ export class Envs {
 
   /**
    * 解析剧集标题过滤正则
-   * @param {Object} env 环境对象
    * @returns {RegExp} 过滤正则表达式
    */
-  static resolveEpisodeTitleFilter(env) {
+  static resolveEpisodeTitleFilter() {
     const defaultFilter = '(特别|惊喜|纳凉)?企划|合伙人手记|超前(营业|vlog)?|速览|vlog|reaction|纯享|加更(版|篇)?|抢先(看|版|集|篇)?|抢鲜|预告|花絮(独家)?|' +
       '特辑|彩蛋|专访|幕后(故事|花絮|独家)?|直播(陪看|回顾)?|未播(片段)?|衍生|番外|会员(专享|加长|尊享|专属|版)?|片花|精华|看点|速看|解读|影评|解说|吐槽|盘点|拍摄花絮|制作花絮|幕后花絮|未播花絮|独家花絮|' +
       '花絮特辑|先导预告|终极预告|正式预告|官方预告|彩蛋片段|删减片段|未播片段|番外彩蛋|精彩片段|精彩看点|精彩回顾|精彩集锦|看点解析|看点预告|' +
@@ -164,7 +163,14 @@ export class Envs {
   }
 
   /**
-   * 解析弹幕转换颜色
+   * 获取记录的原始环境变量 JSON
+   * @returns {Map<any, any>} JSON 字符串
+   */
+  static getOriginalEnvVars() {
+    return this.originalEnvVars;
+  }
+  
+  /** 解析弹幕转换颜色
    * @returns {string} 弹幕转换颜色
    */
   static resolveConvertColor() {
@@ -187,21 +193,73 @@ export class Envs {
    * @param {string} deployPlatform 部署平台
    * @returns {Object} 配置对象
    */
-  static load(env = {}, deployPlatform = 'node') {
+  static load(env = {}) {
     this.env = env;
+    
+    // 环境变量分类和描述映射
+    const envVarConfig = {
+      // API配置
+      'TOKEN': { category: 'api', type: 'text', description: 'API访问令牌' },
+      'ADMIN_TOKEN': { category: 'api', type: 'text', description: '系统管理访问令牌' },
+      'RATE_LIMIT_MAX_REQUESTS': { category: 'api', type: 'number', description: '限流配置：1分钟内最大请求次数，0表示不限流，默认3', min: 0, max: 50 },
+
+      // 源配置
+      'SOURCE_ORDER': { category: 'source', type: 'multi-select', options: this.ALLOWED_SOURCES, description: '源排序配置，默认360,vod,renren,hanjutv' },
+      'OTHER_SERVER': { category: 'source', type: 'text', description: '第三方弹幕服务器，默认https://api.danmu.icu' },
+      'VOD_SERVERS': { category: 'source', type: 'text', description: 'VOD站点配置，格式：名称@URL,名称@URL，默认金蝉@https://zy.jinchancaiji.com,789@https://www.caiji.cyou,听风@https://gctf.tfdh.top' },
+      'VOD_RETURN_MODE': { category: 'source', type: 'select', options: ['all', 'fastest'], description: 'VOD返回模式：all（所有站点）或 fastest（最快的站点），默认fastest' },
+      'VOD_REQUEST_TIMEOUT': { category: 'source', type: 'number', description: 'VOD请求超时时间，默认10000', min: 5000, max: 30000 },
+      'BILIBILI_COOKIE': { category: 'source', type: 'text', description: 'B站Cookie' },
+      'YOUKU_CONCURRENCY': { category: 'source', type: 'number', description: '优酷并发配置，默认8', min: 1, max: 16 },
+      
+      // 匹配配置
+      'PLATFORM_ORDER': { category: 'match', type: 'multi-select', options: this.ALLOWED_PLATFORMS, description: '平台排序配置' },
+      'EPISODE_TITLE_FILTER': { category: 'match', type: 'text', description: '剧集标题过滤规则' },
+      'ENABLE_EPISODE_FILTER': { category: 'match', type: 'boolean', description: '集标题过滤开关' },
+      'STRICT_TITLE_MATCH': { category: 'match', type: 'boolean', description: '严格标题匹配模式' },
+      'TITLE_TO_CHINESE': { category: 'match', type: 'boolean', description: '外语标题转换中文开关' },
+
+      // 弹幕配置
+      'BLOCKED_WORDS': { category: 'danmu', type: 'text', description: '屏蔽词列表' },
+      'GROUP_MINUTE': { category: 'danmu', type: 'number', description: '分钟内合并去重（0表示不去重），默认1', min: 0, max: 30 },
+      'DANMU_LIMIT': { category: 'danmu', type: 'number', description: '弹幕数量限制，单位为k，即千：默认 0，表示不限制弹幕数', min: 0, max: 100 },
+      'DANMU_SIMPLIFIED': { category: 'danmu', type: 'boolean', description: '弹幕繁体转简体开关' },
+      'CONVERT_TOP_BOTTOM_TO_SCROLL': { category: 'danmu', type: 'boolean', description: '顶部/底部弹幕转换为浮动弹幕' },
+      'CONVERT_COLOR': { category: 'danmu', type: 'select', options: ['default', 'white', 'color'], description: '弹幕转换颜色配置' },
+      'DANMU_OUTPUT_FORMAT': { category: 'danmu', type: 'select', options: ['json', 'xml'], description: '弹幕输出格式，默认json' },
+
+      // 缓存配置
+      'SEARCH_CACHE_MINUTES': { category: 'cache', type: 'number', description: '搜索结果缓存时间(分钟)，默认1', min: 1, max: 120 },
+      'COMMENT_CACHE_MINUTES': { category: 'cache', type: 'number', description: '弹幕缓存时间(分钟)，默认1', min: 1, max: 120 },
+      'REMEMBER_LAST_SELECT': { category: 'cache', type: 'boolean', description: '记住手动选择结果' },
+      'MAX_LAST_SELECT_MAP': { category: 'cache', type: 'number', description: '记住上次选择映射缓存大小限制', min: 10, max: 1000 },
+      'UPSTASH_REDIS_REST_URL': { category: 'cache', type: 'text', description: 'Upstash Redis请求链接' },
+      'UPSTASH_REDIS_REST_TOKEN': { category: 'cache', type: 'text', description: 'Upstash Redis访问令牌' },
+
+      // 系统配置
+      'PROXY_URL': { category: 'system', type: 'text', description: '代理/反代地址' },
+      'TMDB_API_KEY': { category: 'system', type: 'text', description: 'TMDB API密钥' },
+      'LOG_LEVEL': { category: 'system', type: 'select', options: ['debug', 'info', 'warn', 'error'], description: '日志级别配置' },
+      'DEPLOY_PLATFROM_ACCOUNT': { category: 'system', type: 'text', description: '部署平台账号ID' },
+      'DEPLOY_PLATFROM_PROJECT': { category: 'system', type: 'text', description: '部署平台项目名称' },
+      'DEPLOY_PLATFROM_TOKEN': { category: 'system', type: 'text', description: '部署平台访问令牌' },
+      'NODE_TLS_REJECT_UNAUTHORIZED': { category: 'system', type: 'number', description: '在建立 HTTPS 连接时是否验证服务器的 SSL/TLS 证书，0表示忽略' },
+    };
+    
     return {
       vodAllowedPlatforms: this.VOD_ALLOWED_PLATFORMS,
       allowedPlatforms: this.ALLOWED_PLATFORMS,
       token: this.get('TOKEN', '87654321', 'string', true), // token，默认为87654321
+      adminToken: this.get('ADMIN_TOKEN', '', 'string', true), // admin token，用于系统管理访问控制
+      sourceOrderArr: this.resolveSourceOrder(), // 源排序
       otherServer: this.get('OTHER_SERVER', 'https://api.danmu.icu', 'string'), // 第三方弹幕服务器
-      vodServers: this.resolveVodServers(env), // vod站点配置，格式：名称@URL,名称@URL
+      vodServers: this.resolveVodServers(), // vod站点配置，格式：名称@URL,名称@URL
       vodReturnMode: this.get('VOD_RETURN_MODE', 'fastest', 'string').toLowerCase(), // vod返回模式：all（所有站点）或 fastest（最快的站点）
       vodRequestTimeout: this.get('VOD_REQUEST_TIMEOUT', '10000', 'string'), // vod超时时间（默认10秒）
       bilibliCookie: this.get('BILIBILI_COOKIE', '', 'string', true), // b站cookie
       youkuConcurrency: Math.min(this.get('YOUKU_CONCURRENCY', 8, 'number'), 16), // 优酷并发配置
-      sourceOrderArr: this.resolveSourceOrder(env, deployPlatform), // 源排序
-      platformOrderArr: this.resolvePlatformOrder(env), // 自动匹配优选平台
-      episodeTitleFilter: this.resolveEpisodeTitleFilter(env), // 剧集标题正则过滤
+      platformOrderArr: this.resolvePlatformOrder(), // 自动匹配优选平台
+      episodeTitleFilter: this.resolveEpisodeTitleFilter(), // 剧集标题正则过滤
       blockedWords: this.get('BLOCKED_WORDS', '', 'string'), // 屏蔽词列表
       groupMinute: Math.min(this.get('GROUP_MINUTE', 1, 'number'), 30), // 分钟内合并去重（默认 1，最大值30，0表示不去重）
       danmuLimit: this.get('DANMU_LIMIT', 0, 'number'), // 等间隔采样限制弹幕总数，单位为k，即千：默认 0，表示不限制弹幕数，若改为5，弹幕总数在超过5000的情况下会将弹幕数控制在5000
@@ -222,6 +280,11 @@ export class Envs {
       titleToChinese: this.get('TITLE_TO_CHINESE', false, 'boolean'), // 外语标题转换中文开关
       rememberLastSelect: this.get('REMEMBER_LAST_SELECT', true, 'boolean'), // 是否记住手动选择结果，用于match自动匹配时优选上次的选择（默认 true，记住）
       MAX_LAST_SELECT_MAP: this.get('MAX_LAST_SELECT_MAP', 100, 'number'), // 记住上次选择映射缓存大小限制（默认 100）
+      deployPlatformAccount: this.get('DEPLOY_PLATFROM_ACCOUNT', '', 'string', true), // 部署平台账号ID配置（默认空）
+      deployPlatformProject: this.get('DEPLOY_PLATFROM_PROJECT', '', 'string', true), // 部署平台项目名称配置（默认空）
+      deployPlatformToken: this.get('DEPLOY_PLATFROM_TOKEN', '', 'string', true), // 部署平台项目名称配置（默认空）
+      NODE_TLS_REJECT_UNAUTHORIZED: this.get('NODE_TLS_REJECT_UNAUTHORIZED', 1, 'number'), // 在建立 HTTPS 连接时是否验证服务器的 SSL/TLS 证书，0表示忽略，默认为1
+      envVarConfig: envVarConfig // 环境变量分类和描述映射
     };
   }
 }

@@ -5,17 +5,20 @@ import { getRedisCaches, judgeRedisValid } from "./utils/redis-util.js";
 import { cleanupExpiredIPs, findUrlById, getCommentCache, getLocalCaches, judgeLocalCacheValid } from "./utils/cache-util.js";
 import { formatDanmuResponse } from "./utils/danmu-util.js";
 import { getBangumi, getComment, getCommentByUrl, matchAnime, searchAnime, searchEpisodes } from "./apis/dandan-api.js";
+import { handleConfig, handleUI, handleLogs, handleClearLogs, handleDeploy, handleClearCache } from "./apis/system-api.js";
+import { handleSetEnv, handleAddEnv, handleDelEnv } from "./apis/env-api.js";
 
 let globals;
 
 async function handleRequest(req, env, deployPlatform, clientIp) {
   // 加载全局变量和环境变量配置
-  globals = Globals.init(env, deployPlatform);
+  globals = Globals.init(env);
 
   const url = new URL(req.url);
   let path = url.pathname;
   const method = req.method;
 
+  globals.deployPlatform = deployPlatform;
   if (deployPlatform === "node") {
     await judgeLocalCacheValid(path, deployPlatform);
   }
@@ -25,6 +28,21 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
   log("info", `request path: ${path}`);
   log("info", `client ip: ${clientIp}`);
 
+  // --- 校验 token ---
+  const parts = path.split("/").filter(Boolean); // 去掉空段
+
+  const knownApiPaths = ["api", "v1", "v2", "search", "match", "bangumi", "comment"];
+
+  const firstPart = parts[0] || "";
+  const isDefaultToken = globals.token === "87654321";
+  const isValidToken = firstPart === globals.token || firstPart === globals.adminToken;
+
+  globals.currentToken = 
+    isValidToken ? firstPart :
+    isDefaultToken && (firstPart === "87654321" || knownApiPaths.includes(firstPart)) ? 
+      (firstPart === "87654321" ? firstPart : "87654321") :
+    "";
+
   if (deployPlatform === "node" && globals.localCacheValid && path !== "/favicon.ico" && path !== "/robots.txt") {
     await getLocalCaches();
   }
@@ -32,25 +50,9 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
     await getRedisCaches();
   }
 
-  function handleHomepage() {
-    log("info", "Accessed homepage with repository information");
-    return jsonResponse({
-      message: "Welcome to the LogVar Danmu API server",
-      version: globals.VERSION,
-      envs: {
-        ...globals.accessedEnvVars,
-        localCacheValid: globals.localCacheValid,
-        redisValid: globals.redisValid
-      },
-      repository: "https://github.com/huangxd-/danmu_api.git",
-      description: "一个人人都能部署的基于 js 的弹幕 API 服务器，支持爱优腾芒哔人韩巴弹幕直接获取，兼容弹弹play的搜索、详情查询和弹幕获取接口规范，并提供日志记录，支持vercel/netlify/edgeone/cloudflare/docker/claw等部署方式，不用提前下载弹幕，没有nas或小鸡也能一键部署。",
-      notice: "本项目仅为个人爱好开发，代码开源。如有任何侵权行为，请联系本人删除。有问题提issue或私信机器人都ok，TG MSG ROBOT: [https://t.me/ddjdd_bot]; 推荐加互助群咨询，TG GROUP: [https://t.me/logvar_danmu_group]; 关注频道获取最新更新内容，TG CHANNEL: [https://t.me/logvar_danmu_channel]。"
-    });
-  }
-
   // GET /
   if (path === "/" && method === "GET") {
-    return handleHomepage();
+    return handleUI();
   }
 
   if (path === "/favicon.ico" || path === "/robots.txt" || method === "OPTIONS") {
@@ -64,20 +66,18 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
     });
   }
 
-  // --- 校验 token ---
-  const parts = path.split("/").filter(Boolean); // 去掉空段
-
   // 如果 token 是默认值 87654321
   if (globals.token === "87654321") {
-    // 检查第一段是否是已知的 API 路径（不是 token）
-    const knownApiPaths = ["api", "v1", "v2", "search", "match", "bangumi", "comment"];
-
     if (parts.length > 0) {
       // 如果第一段是正确的默认 token
-      if (parts[0] === "87654321") {
+      if (parts[0] === "87654321" || parts[0] === globals.adminToken) {
         // 移除 token，继续处理
         path = "/" + parts.slice(1).join("/");
       } else if (!knownApiPaths.includes(parts[0])) {
+        // 对于 /api/config 路径，我们允许无 token 访问，但返回有限信息
+        if (path === "/api/config" && method === "GET") {
+          return handleConfig(false); // 无权限
+        }
         // 第一段不是已知的 API 路径，可能是错误的 token
         // 返回 401
         log("error", `Invalid token in path: ${path}`);
@@ -90,7 +90,11 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
     }
   } else {
     // token 不是默认值，必须严格校验
-    if (parts.length < 1 || parts[0] !== globals.token) {
+    if (parts.length < 1 || (parts[0] !== globals.token && parts[0] !== globals.adminToken)) {
+      // 对于 /api/config 路径，如果使用默认 token，我们允许无 token 访问，但返回有限信息
+      if (path === "/api/config" && method === "GET") {
+        return handleConfig(false); // 无权限
+      }
       log("error", `Invalid or missing token in path: ${path}`);
       return jsonResponse(
         { errorCode: 401, success: false, errorMessage: "Unauthorized" },
@@ -101,10 +105,16 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
     path = "/" + parts.slice(1).join("/");
   }
 
+  // GET /api/config - 获取配置信息 (需要 token)
+  if (path === "/api/config" && method === "GET") {
+    return handleConfig(true); // 有权限
+  }
+
   log("info", path);
 
   // 智能处理API路径前缀，确保最终有一个正确的 /api/v2
-  if (path !== "/" && path !== "/api/logs") {
+  if (path !== "/" && path !== "/api/logs" && !path.startsWith('/api/env') 
+    && !path.startsWith('/api/deploy') && !path.startsWith('/api/cache')) {
       log("info", `[Path Check] Starting path normalization for: "${path}"`);
       const pathBeforeCleanup = path; // 保存清理前的路径检查是否修改
       
@@ -124,7 +134,8 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
       
       // 2. 补全：如果路径缺少前缀（例如请求原始路径为 /search/anime），则补全
       const pathBeforePrefixCheck = path;
-      if (!path.startsWith('/api/v2') && path !== '/' && !path.startsWith('/api/logs')) {
+      if (!path.startsWith('/api/v2') && path !== '/' && !path.startsWith('/api/logs') 
+        && !path.startsWith('/api/env') && !path.startsWith('/api/env') && !path.startsWith('/api/cache')) {
           log("info", `[Path Check] Path is missing /api/v2 prefix. Adding...`);
           path = '/api/v2' + path;
       }
@@ -139,7 +150,7 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
   
   // GET /
   if (path === "/" && method === "GET") {
-    return handleHomepage();
+    return handleUI();
   }
 
   // GET /api/v2/search/anime
@@ -279,19 +290,52 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
 
   // GET /api/logs
   if (path === "/api/logs" && method === "GET") {
-    const logText = globals.logBuffer
-      .map(
-        (log) =>
-          `[${log.timestamp}] ${log.level}: ${formatLogMessage(log.message)}`
-      )
-      .join("\n");
-    return new Response(logText, { headers: { "Content-Type": "text/plain; charset=utf-8" } });
+    return handleLogs();
+  }
+
+  // POST /api/logs/clear
+  if (path === "/api/logs/clear" && method === "POST") {
+    return handleClearLogs();
+  }
+
+  // POST /api/env/set - 设置环境变量
+  if (path === "/api/env/set" && method === "POST") {
+    return handleSetEnv(req);
+  }
+
+  // POST /api/env/add - 添加环境变量
+  if (path === "/api/env/add" && method === "POST") {
+    return handleAddEnv(req);
+  }
+
+  // POST /api/env/del - 删除环境变量
+  if (path === "/api/env/del" && method === "POST") {
+    return handleDelEnv(req);
+  }
+
+  // POST /api/deploy - 重新部署
+  if (path === "/api/deploy" && method === "POST") {
+    return handleDeploy();
+  }
+
+  // POST /api/cache/clear - 清理缓存
+  if (path === "/api/cache/clear" && method === "POST") {
+    return handleClearCache();
   }
 
   return jsonResponse({ message: "Not found" }, 404);
 }
 
-
+function isRunningOnVercel() {
+  if (typeof process === 'undefined' || !process.env) {
+    return false;
+  }
+  return !!(
+    process.env.VERCEL ||
+    process.env.VERCEL_ENV ||
+    process.env.VERCEL_URL
+  );
+}
 
 // --- Cloudflare Workers 入口 ---
 export default {
@@ -299,7 +343,7 @@ export default {
     // 获取客户端的真实 IP
     const clientIp = request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for') || 'unknown';
 
-    return handleRequest(request, env, "cloudflare", clientIp);
+    return handleRequest(request, env, isRunningOnVercel() ? "vercel" : "cloudflare", clientIp);
   },
 };
 
