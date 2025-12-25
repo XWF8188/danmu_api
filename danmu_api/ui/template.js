@@ -85,12 +85,13 @@ export const HTML_TEMPLATE = /* html */ `
                     <div class="form-group">
                         <label>选择接口</label>
                         <select id="api-select" onchange="loadApiParams()">
-                            <option value="">请选择接口</option>
+                            <option value="">-- 请选择接口 --</option>
                             <option value="searchAnime">搜索动漫 - /api/v2/search/anime</option>
                             <option value="searchEpisodes">搜索剧集 - /api/v2/search/episodes</option>
                             <option value="matchAnime">匹配动漫 - /api/v2/match</option>
                             <option value="getBangumi">获取番剧详情 - /api/v2/bangumi/:animeId</option>
                             <option value="getComment">获取弹幕 - /api/v2/comment/:commentId</option>
+                            <option value="getSegmentComment">获取分片弹幕 - /api/v2/segmentcomment</option>
                         </select>
                     </div>
                 </div>

@@ -4,9 +4,10 @@ import { log, formatLogMessage } from './utils/log-util.js'
 import { getRedisCaches, judgeRedisValid } from "./utils/redis-util.js";
 import { cleanupExpiredIPs, findUrlById, getCommentCache, getLocalCaches, judgeLocalCacheValid } from "./utils/cache-util.js";
 import { formatDanmuResponse } from "./utils/danmu-util.js";
-import { getBangumi, getComment, getCommentByUrl, matchAnime, searchAnime, searchEpisodes } from "./apis/dandan-api.js";
+import { getBangumi, getComment, getCommentByUrl, getSegmentComment, matchAnime, searchAnime, searchEpisodes } from "./apis/dandan-api.js";
 import { handleConfig, handleUI, handleLogs, handleClearLogs, handleDeploy, handleClearCache } from "./apis/system-api.js";
 import { handleSetEnv, handleAddEnv, handleDelEnv } from "./apis/env-api.js";
+import { Segment } from "./models/dandan-model.js"
 
 let globals;
 
@@ -177,6 +178,7 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
   if (path.startsWith("/api/v2/comment") && method === "GET") {
     const queryFormat = url.searchParams.get('format');
     const videoUrl = url.searchParams.get('url');
+    const segmentFlag = url.searchParams.get('segmentflag');
 
     // ⚠️ 限流设计说明：
     // 1. 先检查缓存，缓存命中时直接返回，不计入限流次数
@@ -225,7 +227,7 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
       }
 
       // 通过URL获取弹幕
-      return getCommentByUrl(videoUrl, queryFormat);
+      return getCommentByUrl(videoUrl, queryFormat, segmentFlag);
     }
 
     // 否则通过commentId获取弹幕
@@ -285,7 +287,37 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
       log("info", `[Rate Limit] IP ${clientIp} request count: ${recentRequests.length}/${globals.rateLimitMaxRequests}`);
     }
 
-    return getComment(path, queryFormat);
+    return getComment(path, queryFormat, segmentFlag);
+  }
+
+  // POST /api/v2/segmentcomment - 接收segment类的JSON请求体
+ if (path.startsWith("/api/v2/segmentcomment") && method === "POST") {
+    try {
+      const queryFormat = url.searchParams.get('format');
+      // 从请求体获取segment数据
+      const requestBody = await req.json();
+      let segment;
+      
+      // 尝试解析JSON
+      try {
+        segment = Segment.fromJson(requestBody);
+      } catch (e) {
+        log("error", "Invalid JSON in request body for segment");
+        return jsonResponse(
+          { errorCode: 400, success: false, errorMessage: "Invalid JSON in request body" },
+          400
+        );
+      }
+
+      // 通过URL和平台获取分段弹幕
+      return getSegmentComment(segment, queryFormat);
+    } catch (error) {
+      log("error", `Error processing segmentcomment request: ${error.message}`);
+      return jsonResponse(
+        { errorCode: 500, success: false, errorMessage: "Internal server error" },
+        500
+      );
+    }
   }
 
   // GET /api/logs
