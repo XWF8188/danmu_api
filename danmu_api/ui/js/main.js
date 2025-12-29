@@ -118,12 +118,16 @@ let originalToken = '';
 
 // 构建带token的API请求路径
 function buildApiUrl(path, isSystemPath = false) {
-    // 如果是系统管理路径且有admin token，则使用admin token
+    let res;
+    let _reverseProxy = "";
+    // 如果是系统管理路径且有admin token,则使用admin token
     if (isSystemPath && currentAdminToken && currentAdminToken.trim() !== '' && currentAdminToken.trim() !== '*'.repeat(currentAdminToken.length)) {
-        return '/' + currentAdminToken + path;
+        res = '/' + currentAdminToken + path;
+    } else {
+        // 否则使用普通token
+        res = (currentToken ? '/' + currentToken : "") + path;
     }
-    // 否则使用普通token
-    return (currentToken ? '/' + currentToken : "") + path;
+    return _reverseProxy + res;
 }
 
 // 从API加载真实环境变量数据
@@ -180,6 +184,8 @@ function updateApiEndpoint() {
   return fetch(buildApiUrl('/api/config', true))
     .then(response => response.json())
     .then(config => {
+      let _reverseProxy = "";
+
       // 获取当前页面的协议、主机和端口
       const protocol = window.location.protocol;
       const host = window.location.host;
@@ -187,7 +193,7 @@ function updateApiEndpoint() {
       const adminToken = config.originalEnvVars?.ADMIN_TOKEN;
 
       // 获取URL路径并提取token
-      const urlPath = window.location.pathname;
+      const urlPath = window.location.pathname.replace(_reverseProxy, "");
       const pathParts = urlPath.split('/').filter(part => part !== '');
       const urlToken = pathParts.length > 0 ? pathParts[0] : '';
       let apiToken = '********';
@@ -204,7 +210,7 @@ function updateApiEndpoint() {
       }
       
       // 构造API端点URL
-      const apiEndpoint = protocol + '//' + host + '/' + apiToken;
+      const apiEndpoint = protocol + '//' + host + _reverseProxy + '/' + apiToken;
       const apiEndpointElement = document.getElementById('api-endpoint');
       if (apiEndpointElement) {
         apiEndpointElement.textContent = apiEndpoint;
@@ -216,7 +222,7 @@ function updateApiEndpoint() {
       // 出错时显示默认值
       const protocol = window.location.protocol;
       const host = window.location.host;
-      const apiEndpoint = protocol + '//' + host + '/********';
+      const apiEndpoint = protocol + '//' + host + _reverseProxy + '/********';
       const apiEndpointElement = document.getElementById('api-endpoint');
       if (apiEndpointElement) {
         apiEndpointElement.textContent = apiEndpoint;
@@ -250,11 +256,13 @@ function getDockerVersion() {
 }
 
 // 切换导航
-function switchSection(section) {
+function switchSection(section, event = null) {
     // 检查是否尝试访问受token保护的section（日志查看、接口调试、系统配置需要token访问）
     if (section === 'logs' || section === 'api' || section === 'env' || section === 'push') {
+        let _reverseProxy = "";
+
         // 获取URL路径并提取token
-        const urlPath = window.location.pathname;
+        const urlPath = window.location.pathname.replace(_reverseProxy, "");
         const pathParts = urlPath.split('/').filter(part => part !== '');
         const urlToken = pathParts.length > 0 ? pathParts[0] : '';
         
@@ -285,7 +293,10 @@ function switchSection(section) {
                     document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
 
                     document.getElementById(\`\${section}-section\`).classList.add('active');
-                    event.target.classList.add('active');
+                    // 在异步回调中使用传入的event参数来设置按钮的active状态
+                    if (event && event.target) {
+                        event.target.classList.add('active');
+                    }
 
                     addLog(\`切换到\${section === 'env' ? '环境变量' : section === 'preview' ? '配置预览' : section === 'logs' ? '日志查看' : section === 'push' ? '推送弹幕' : '接口调试'}模块\`, 'info');
                 }
@@ -296,7 +307,9 @@ function switchSection(section) {
             document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
 
             document.getElementById(\`\${section}-section\`).classList.add('active');
-            event.target.classList.add('active');
+            if (event && event.target) {
+                event.target.classList.add('active');
+            }
 
             addLog(\`切换到\${section === 'env' ? '环境变量' : section === 'preview' ? '配置预览' : section === 'logs' ? '日志查看' : section === 'push' ? '推送弹幕' : '接口调试'}模块\`, 'info');
             
@@ -313,17 +326,21 @@ function switchSection(section) {
         document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
 
         document.getElementById(\`\${section}-section\`).classList.add('active');
-        event.target.classList.add('active');
+        if (event && event.target) {
+            event.target.classList.add('active');
+        }
 
         addLog(\`切换到\${section === 'env' ? '环境变量' : section === 'preview' ? '配置预览' : section === 'logs' ? '日志查看' : section === 'push' ? '推送弹幕' : '接口调试'}模块\`, 'info');
     }
 }
 
 // 切换类别
-function switchCategory(category) {
+function switchCategory(category, event = null) {
     currentCategory = category;
     document.querySelectorAll('.category-btn').forEach(b => b.classList.remove('active'));
-    event.target.classList.add('active');
+    if (event && event.target) {
+        event.target.classList.add('active');
+    }
     renderEnvList();
 }
 
