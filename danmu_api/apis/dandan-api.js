@@ -421,8 +421,12 @@ async function matchAniAndEp(season, episode, year, searchData, title, req, plat
     // 判断剧集
     const normalizedTitle = normalizeSpaces(title);
     for (const anime of searchData.animes) {
-      if (globals.rememberLastSelect && preferAnimeId && anime.bangumiId.toString() !== preferAnimeId.toString() &&
-          anime.animeId.toString() !== preferAnimeId.toString()) continue;
+      const animeIsPrefer = 
+        globals.rememberLastSelect && 
+        preferAnimeId && 
+        String(anime.bangumiId) !== String(preferAnimeId) && 
+        String(anime.animeId) !== String(preferAnimeId);
+      if (animeIsPrefer) continue;
       if (normalizeSpaces(anime.animeTitle).includes(normalizedTitle)) {
         // 年份匹配优先于季匹配
         if (!matchYear(anime, year)) {
@@ -445,7 +449,7 @@ async function matchAniAndEp(season, episode, year, searchData, title, req, plat
         log("info", "过滤后的集标题", filteredEpisodes.map(episode => episode.episodeTitle));
 
         // 年份匹配通过后，再判断season
-        if (matchSeason(anime, title, season)) {
+        if (matchSeason(anime, title, season) || !animeIsPrefer) {
           // 使用新的集数匹配策略
           const matchedEpisode = findEpisodeByNumber(filteredEpisodes, episode, platform);
           if (matchedEpisode) {
@@ -459,7 +463,12 @@ async function matchAniAndEp(season, episode, year, searchData, title, req, plat
   } else {
     // 判断电影
     for (const anime of searchData.animes) {
-      if (globals.rememberLastSelect && preferAnimeId && anime.bangumiId.toString() !== preferAnimeId.toString()) continue;
+      const animeIsPrefer = 
+        globals.rememberLastSelect && 
+        preferAnimeId && 
+        String(anime.bangumiId) !== String(preferAnimeId) && 
+        String(anime.animeId) !== String(preferAnimeId);
+      if (animeIsPrefer) continue;
       const animeTitle = anime.animeTitle.split("(")[0].trim();
       if (animeTitle === title) {
         // 年份匹配优先

@@ -233,6 +233,7 @@ export function storeAnimeIdsToMap(curAnimes, key) {
     // 保存旧的prefer值
     const oldValue = globals.lastSelectMap.get(key);
     const oldPrefer = oldValue?.prefer;
+    const oldSource = oldValue?.source;
 
     // 如果key已存在，先删除它（为了更新顺序，保证 FIFO）
     if (globals.lastSelectMap.has(key)) {
@@ -242,7 +243,7 @@ export function storeAnimeIdsToMap(curAnimes, key) {
     // 添加新记录，保留prefer字段
     globals.lastSelectMap.set(key, {
         animeIds: [...uniqueAnimeIds],
-        ...(oldPrefer !== undefined && { prefer: oldPrefer })
+        ...(oldPrefer !== undefined && { prefer: oldPrefer, source: oldSource })
     });
 
     // 检查是否超过 MAX_LAST_SELECT_MAP，超过则删除最早的
