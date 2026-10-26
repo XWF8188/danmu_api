@@ -24,6 +24,19 @@ import {
 
 let globals;
 
+const FONGMI_DANMAKU_PATHS = new Set([
+  "/danmaku",
+  "/api/v2/fongmi/danmaku"
+]);
+
+function isFongmiDanmakuRequest(path, method, url) {
+  if (method !== "GET" && method !== "POST") return false;
+  if (path === "/") {
+    return method === "POST" || (method === "GET" && url.searchParams.has("name"));
+  }
+  return FONGMI_DANMAKU_PATHS.has(path);
+}
+
 // 系统管理接口：必须显式携带 ADMIN_TOKEN，默认 TOKEN=87654321 的免 token 兼容不适用于这些路径
 const ADMIN_ONLY_PATH_PATTERNS = [
   /^\/api\/env\/(?:set|add|del)\/?$/,
@@ -40,7 +53,8 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
   globals = Globals.init(env);
 
   const url = new URL(req.url);
-  let path = url.pathname;
+  let path = url.pathname.replace(/\/{2,}/g, "/");
+  if (path.length > 1) path = path.replace(/\/+$/, "");
   const method = req.method;
 
   globals.deployPlatform = deployPlatform;
@@ -147,8 +161,8 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
     '/api/v2/segmentcomment'
   ];
 
-  // 只有当path包含指定接口关键字时才添加到请求记录数组
-  if (targetPaths.some(targetPath => path.includes(targetPath))) {
+  // 识别 FongMi 根地址或指定业务接口，记录请求历史和今日请求数。
+  if (isFongmiDanmakuRequest(tokenlessPath, method, url) || targetPaths.some(targetPath => path.includes(targetPath))) {
     // 更新今日请求计数
     // 从 reqRecords 最后一个元素获取上一个请求的时间
     const lastRecord = globals.reqRecords.length > 0 ? globals.reqRecords[globals.reqRecords.length - 1] : null;
@@ -216,7 +230,7 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
   }
 
   // GET /
-  if (path === "/" && method === "GET") {
+  if (path === "/" && method === "GET" && !isFongmiDanmakuRequest(path, method, url)) {
     return handleUI();
   }
 
@@ -377,7 +391,7 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
   }
 
   // GET /
-  if (path === "/" && method === "GET") {
+  if (path === "/" && method === "GET" && !isFongmiDanmakuRequest(path, method, url)) {
     return handleUI();
   }
 
@@ -391,13 +405,8 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
     return searchEpisodes(url);
   }
 
-  // GET|POST /api/v2/fongmi/danmaku
-  if (path === "/api/v2/fongmi/danmaku" && (method === "GET" || method === "POST")) {
-    return getFongmiDanmaku(url, req);
-  }
-
-  // GET|POST /danmaku
-  if (path === "/danmaku" && (method === "GET" || method === "POST")) {
+  // GET|POST /、/danmaku 或 /api/v2/fongmi/danmaku
+  if (isFongmiDanmakuRequest(path, method, url)) {
     return getFongmiDanmaku(url, req);
   }
 
